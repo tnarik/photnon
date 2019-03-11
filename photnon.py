@@ -5,8 +5,12 @@ import os
 import hashlib
 from tqdm import tqdm
 
+import magic
+
 from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
+from hachoir.core import config as HachoirConfig
+#HachoirConfig.quiet = True
 
 import glob
 import time
@@ -24,12 +28,16 @@ CODE_WEIRD = 3
 
 CHUNK_SIZE = 2**20 # 1 MB
 
+IGNORED_FOLDERS = ['.AppleDouble']
+IGNORED_FILES = ['.DS_Store', 'ZbThumbnail.info']
+
 count_fixed = 0
 def identify_file(path, name):
 	global count_fixed
 	datetime = None
 	model = None
 	digest = None
+	mime = None
 	code = CODE_OK
 	try:
 		digester = hashlib.sha1()
@@ -37,6 +45,7 @@ def identify_file(path, name):
 			for chunk in iter(lambda: f.read(CHUNK_SIZE), b''):
 				digester.update(chunk)
 		digest = digester.hexdigest()
+		mime = magic.from_file(path, mime=True)
 
 		pic_exif = piexif.load(path)
 		if args.verbose > 4 : print(pic_exif)
@@ -44,46 +53,27 @@ def identify_file(path, name):
 			#36867 - taken
 			#36868 - digitized
 
-			parser = createParser(path)
-			if parser:
-				try:
-					metadata = extractMetadata(parser)
-					if metadata:
-						metadata = metadata.exportDictionary(human=False)
-						print("{} {}".format(count_fixed, 
-							metadata['Metadata']['creation_date']))
-	
-						datetime = metadata['Metadata']['creation_date']
-						model = metadata['Metadata']['camera_model']
-						#print("     {}  {}".format(Fore.GREEN, datetime))
-				except:
-					pass
-
 			# datetime
-			if not datetime:		
-				if (36867 in pic_exif["Exif"]):
-					#and ( pic_exif["Exif"][36867] == pic_exif["Exif"][36868]):
-					datetime = pic_exif["Exif"][36867].decode('utf-8')
-					if args.verbose > 1 : print("{}EXIF - {}".format(Fore.BLUE, name))
-				elif 306 in pic_exif['0th']:
-					datetime = pic_exif['0th'][306].decode('utf-8')
-					if args.verbose > 1 : print("{}0th - {}".format(Fore.WHITE, name))
-				elif 'GPS' in pic_exif and 29 in pic_exif['GPS']:
-					datetime = pic_exif['GPS'][29].decode('utf-8')
-					if args.verbose > 1 : print("{}GPS - {}".format(Fore.GREEN, name))
-				else:
-					code = CODE_WEIRD
-					if args.verbose: print("{}ABSENT - {}".format(Fore.YELLOW, name))
-					if args.verbose > 2 : print(pic_exif)			
+			if (36867 in pic_exif["Exif"]):
+				#and ( pic_exif["Exif"][36867] == pic_exif["Exif"][36868]):
+				datetime = pic_exif["Exif"][36867].decode('utf-8')
+				if args.verbose > 1 : print("{}EXIF - {}".format(Fore.BLUE, name))
+			elif 306 in pic_exif['0th']:
+				datetime = pic_exif['0th'][306].decode('utf-8')
+				if args.verbose > 1 : print("{}0th - {}".format(Fore.WHITE, name))
+			elif 'GPS' in pic_exif and 29 in pic_exif['GPS']:
+				datetime = pic_exif['GPS'][29].decode('utf-8')
+				if args.verbose > 1 : print("{}GPS - {}".format(Fore.GREEN, name))
+			else:
+				code = CODE_WEIRD
+				if args.verbose: print("{}ABSENT - {}".format(Fore.YELLOW, name))
+				if args.verbose > 2 : print(pic_exif)			
 			# model
-			if not model:
-				if 42036 in pic_exif["Exif"]:
-					model = pic_exif["Exif"][42036].decode('utf-8')
-				elif 272 in pic_exif['0th']:
-					model = pic_exif["0th"][272].decode('utf-8')
+			if 42036 in pic_exif["Exif"]:
+				model = pic_exif["Exif"][42036].decode('utf-8')
+			elif 272 in pic_exif['0th']:
+				model = pic_exif["0th"][272].decode('utf-8')
 
-			#print("  {} - {} ".format(name, datetime) )
-#			datetimed_photos.append([dir, name, datetime])
 		except KeyError:
 			code = CODE_ERROR
 			print("{}KEY ERROR - {}".format(Fore.RED, name))
@@ -93,24 +83,29 @@ def identify_file(path, name):
 		if args.verbose: print("{}NOT an EXIF picture - {}".format(Fore.RED, name))
 
 		parser = createParser(path)
+		print(path)
 		if parser:
 			try:
 				metadata = extractMetadata(parser)
 				if metadata:
 					metadata = metadata.exportDictionary(human=False)
-					print("{} {}".format(count_fixed, 
-						metadata['Metadata']['creation_date']))
+					#	print("{} {}".format(count_fixed, 
+					#		metadata['Metadata']['creation_date']))
 
-					datetime = metadata['Metadata']['creation_date']
+					if 'Metadata' in metadata:
+						datetime = metadata['Metadata']['creation_date'].replace('-', ':')
+					elif 'Common' in metadata:
+						datetime = metadata['Common']['creation_date'].replace('-', ':')
+
 					code = CODE_OK
 					count_fixed += 1
 					if args.verbose: print("     {}NOW! - {}".format(Fore.GREEN, name))
 			except:
-				print(metadata)
+				print("{} - {}".format(name, metadata))
 		else:
 			if args.verbose: print("     {}NOT even NOW - {}".format(Fore.RED, name))
 
-	return (datetime, model, digest, code)
+	return (datetime, model, digest, mime, code)
 
 
 def explore(space):
@@ -125,23 +120,35 @@ def explore(space):
 	for source in space:
 		for path in glob.iglob(source):
 			if os.path.isfile(path):
-				datetime, model, digest, code = identify_file(path, os.path.split(path)[1])
+				datetime, model, digest, mime, code = identify_file(path, os.path.split(path)[1])
 				data.append([*os.path.split(path), datetime, model, digest, code])
 			else:
+				# Pre-calculation of data size to process
+				total_size = 0
 				for p,n,f in os.walk(path):
-					print("{} {} {}".format(p, n, len(f)))
-				print("--")
+					for ign in IGNORED_FOLDERS:
+						if ign in n: n.remove(ign)
+					for ign in IGNORED_FILES:
+						if ign in f: f.remove(ign)
+					for file in f:
+						total_size += os.stat(os.path.join(p, file)).st_size
 			
-				for p,n,f in os.walk(path):
-					for file in tqdm(f):
-					#if dir.startswith('data-download-'):
-					#	print("{}--- {} ---".format(Fore.GREEN, dir))
-				#		for file in os.scandir(os.path.join(folders, dir)):
-						datetime, model, digest, code = identify_file(os.path.join(p,file), file)
-						if code is None:
-							continue
-		
-						data.append([p, file, datetime, model, digest, code])
+				# Gigabytes instead of Gibibytes
+				with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=100) as pbar:
+					for p,n,f in os.walk(path):
+						for ign in IGNORED_FOLDERS:
+							if ign in n: n.remove(ign)
+						for ign in IGNORED_FILES:
+							if ign in f: f.remove(ign)
+
+						for file in tqdm(f):
+							pbar.update(os.stat(os.path.join(p, file)).st_size)
+							datetime, model, digest, mime, code = identify_file(os.path.join(p,file), file)
+							if code is None:
+								continue
+			
+							data.append([p, file, datetime, model, digest, mime, code])
+							# file sizes # pbar.update()
 
 	return data
 
@@ -161,14 +168,15 @@ if __name__ == "__main__":
 		                help='files, folders or pattern space to explore',
 		                dest='space')
 	args = parser.parse_args()
-		
+	
+	data = None
 	if args.space:
 		print('no data file, so just explore')
 		data = explore(args.space)	
 		if len(data) > 0:
 			print("{} entries".format(len(data)))
 
-			ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'model', 'digest', 'code'])
+			ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'model', 'digest', 'mime', 'code'])
 
 			# split into OK and ERROR files
 			ph_ok, ph_error = ph[ph.code == CODE_OK].copy(), ph[ph.code != CODE_OK].copy()
@@ -194,6 +202,10 @@ if __name__ == "__main__":
 
 	if args.datafile:
 		print('if it exists....')
+		if data is not None:
+			ph_ok.to_hdf("{}.pho".format(args.datafile), key='ok', format="table")
+			ph_error.to_hdf("{}.pho".format(args.datafile), key='error', format="table")
+
 	else:
 		print('default file')
 
