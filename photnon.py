@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 
+# piexif is faster than Hachoir, and so has prececence
+# Even if it cannot treat as many files, the speed gain is worthy
+#
+
 import piexif
 import os
 import hashlib
 from tqdm import tqdm
 
 import magic
+import re
 
 from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
@@ -28,8 +33,14 @@ CODE_WEIRD = 3
 
 CHUNK_SIZE = 2**20 # 1 MB
 
-IGNORED_FOLDERS = ['.AppleDouble']
-IGNORED_FILES = ['.DS_Store', 'ZbThumbnail.info']
+IGNORED_FOLDERS = ['.AppleDouble', '.git']
+IGNORED_FILES = ['.DS_Store', 'ZbThumbnail.info', '.gitignore']
+IGNORED_PATTERNS = ['.*\.json']
+
+patterns = []
+for pat in IGNORED_PATTERNS:
+	patterns.append(re.compile(pat))
+IGNORED_PATTERNS = patterns
 
 count_fixed = 0
 def identify_file(path, name):
@@ -83,7 +94,7 @@ def identify_file(path, name):
 		if args.verbose: print("{}NOT an EXIF picture - {}".format(Fore.RED, name))
 
 		parser = createParser(path)
-		print(path)
+		#print(path)
 		if parser:
 			try:
 				metadata = extractMetadata(parser)
@@ -107,6 +118,14 @@ def identify_file(path, name):
 
 	return (datetime, model, digest, mime, code)
 
+def filter_out(n, f):
+	for ign in IGNORED_FOLDERS:
+		if ign in n: n.remove(ign)
+	for ign in IGNORED_FILES:
+		if ign in f: f.remove(ign)
+	for ign in IGNORED_PATTERNS:
+		f = list(filter(lambda x: ign.match(x) is None,f))
+	return n, f
 
 def explore(space):
 	""" files can be either a file, a folder or a pattern
@@ -126,21 +145,15 @@ def explore(space):
 				# Pre-calculation of data size to process
 				total_size = 0
 				for p,n,f in os.walk(path):
-					for ign in IGNORED_FOLDERS:
-						if ign in n: n.remove(ign)
-					for ign in IGNORED_FILES:
-						if ign in f: f.remove(ign)
+					n, f = filter_out(n,f)
+
 					for file in f:
 						total_size += os.stat(os.path.join(p, file)).st_size
 			
 				# Gigabytes instead of Gibibytes
 				with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=100) as pbar:
 					for p,n,f in os.walk(path):
-						for ign in IGNORED_FOLDERS:
-							if ign in n: n.remove(ign)
-						for ign in IGNORED_FILES:
-							if ign in f: f.remove(ign)
-
+						n, f = filter_out(n,f)
 						for file in tqdm(f):
 							pbar.update(os.stat(os.path.join(p, file)).st_size)
 							datetime, model, digest, mime, code = identify_file(os.path.join(p,file), file)
