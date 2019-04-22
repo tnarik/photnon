@@ -196,9 +196,61 @@ def all_folders(folders, result = set()):
   for folder in folders:
     result.add(folder)
     head, tail = os.path.split(folder)
-    if head:
+    if head and tail:
       all_folders(head, result)
   return result
+
+def report_dupes(photos_df, dup_indexes):
+  print("{}Should remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
+              (photos_df[dup_indexes].should_remove.value_counts(sort=False)).to_string()))
+  print("{}Should remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
+              (photos_df.should_remove.value_counts(sort=False)).to_string()))
+
+def write_dupes_removal_scripts(photos_df, dup_indexes, dupes_script="dupes.sh", use_name=False):
+    if len(photos_df[dup_indexes]) == 0:
+      return
+
+    folders = sorted(all_folders(photos_df[dup_indexes].folder.unique()))
+    folder_completer = WordCompleter(folders)
+
+    validator = Validator.from_callable(
+      lambda x: x in folders,
+      error_message='not a valid folder',
+      move_cursor_to_end=True)
+    preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
+      validator=validator)
+  
+    # Keep everything by default
+    photos_df.loc[:, 'should_remove'] = False
+  
+    # Preserve 'preferred folder'. This doesn't work when duplicates are on the same one
+    keep_list = photos_df.loc[dup_indexes, 'folder'].str.match(preferred_folder)
+    keepers = photos_df.loc[dup_indexes][keep_list].index
+    removable_digests = photos_df.loc[keepers, "digest"].unique()
+    removable = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, "digest"].isin(removable_digests)].index
+    # Mark the duplicates with a digest matching those from the preferred folder
+    photos_df.loc[removable, 'should_remove'] = True
+    # Keep the preferred folder verion
+    photos_df.loc[keepers, 'should_remove'] = False
+    print("{}Should remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
+              (photos_df[dup_indexes].should_remove.value_counts(sort=False)).to_string()))
+    print("{}Should remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
+              (photos_df.should_remove.value_counts(sort=False)).to_string()))
+  
+    str = ""
+    for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove']].iterrows():
+      if use_name:
+        keeper = photos_df[(photos_df.should_remove == False) &
+                       (photos_df.digest == p.digest) & 
+                       (photos_df['name'] == p['name'])].iloc[0]
+      else:
+        keeper = photos_df[(photos_df.should_remove == False) &
+                       (photos_df.digest == p.digest)].iloc[0]        
+      str += "diff \"{}\" \"{}\"".format(os.path.join(keeper['folder'], keeper['name']), os.path.join(p['folder'], p['name']))
+      str += " && echo rm \"{}\"\n".format(os.path.join(p['folder'], p['name']))
+    with open(dupes_script, 'w') as f:
+        f.write(str)
+
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Photon")
@@ -305,16 +357,17 @@ if __name__ == "__main__":
                   (ph_ok[dup_full].folder.value_counts()).to_string()))
 
       list_digest = ph_ok.digest.value_counts()
-      dup_digest = list_digest[list_digest > 1].index.values
+      dup_digest_values = list_digest[list_digest > 1].index.values
+      dup_digest = ph_ok.digest.isin(dup_digest_values)
       print("{}digest duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
-          len(ph_ok[ph_ok.digest.isin(dup_digest)]),
-          len(dup_digest),
+          len(ph_ok[dup_digest]),
+          len(dup_digest_values),
           len(ph_ok),
           len(list_digest)
           ))
-      if len(ph_ok[ph_ok.digest.isin(dup_digest)]) > 0:
+      if len(ph_ok[dup_digest]) > 0:
         print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-                (ph_ok[ph_ok.digest.isin(dup_digest)].folder.value_counts()).to_string()))
+                (ph_ok[dup_digest].folder.value_counts()).to_string()))
 
       print("\n")
       result = confirm(
@@ -336,48 +389,12 @@ if __name__ == "__main__":
           with open('inspection_OK.html', 'w') as f:
             f.write(str)
 
-        if len(ph_ok[dup_full]) > 0:
-          print("{}--- full duplicates (names, tags, etc)".format(Fore.YELLOW))
-  
-          folders = sorted(all_folders(ph_ok[dup_full].folder.unique()))
-          folder_completer = WordCompleter(folders)
-          #class NumberValidator(Validator):
-          #  def validate(self, document):
-          #    raise ValidationError(message='not a valid folder',
-          #                          cursor_position=0)
-          print(folders)
-          validator = Validator.from_callable(
-            lambda x: x in folders,
-            error_message='not a valid folder',
-            move_cursor_to_end=True)
-          preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
-            validator=validator)
-  
-          # Keep everything by default
-          ph_ok.loc[:, 'should_remove'] = False
-  
-          keep_list = ph_ok.loc[dup_full, 'folder'].str.match(preferred_folder)
-          keepers = ph_ok.loc[dup_full][keep_list].index
-          removable_digests = ph_ok.loc[keepers, "digest"].unique()
-          removable = ph_ok.loc[dup_full][ph_ok.loc[dup_full, "digest"].isin(removable_digests)].index
-          # Mark the duplicates with a digest matching those from the preferred folder
-          ph_ok.loc[removable, 'should_remove'] = True
-          # Keep the preferred folder verion
-          ph_ok.loc[keepers, 'should_remove'] = False
-          print("{}Should remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
-                    (ph_ok[dup_full].should_remove.value_counts(sort=False)).to_string()))
-          print("{}Should remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
-                    (ph_ok.should_remove.value_counts(sort=False)).to_string()))
-  
-          str = ""
-          for i, p in ph_ok.loc[dup_full][ph_ok.loc[dup_full, 'should_remove']].iterrows():
-            keeper = ph_ok[(ph_ok.should_remove == False) &
-                           (ph_ok.digest == p.digest) & 
-                           (ph_ok['name'] == p['name'])].iloc[0]
-            str += "diff \"{}\" \"{}\"".format(os.path.join(keeper['folder'], keeper['name']), os.path.join(p['folder'], p['name']))
-            str += " && echo rm \"{}\"\n".format(os.path.join(p['folder'], p['name']))
-          with open('dupes.sh', 'w') as f:
-              f.write(str)
+        print("For full duplicates, if they exist")
+        write_dupes_removal_scripts(ph_ok, dup_full, "dupes_full.sh", use_name=True)
+        #report_dupes(ph_ok, dup_full)
+        print("For digest duplicates, if they exist")
+        write_dupes_removal_scripts(ph_ok, dup_digest, "dupes_bydigest.sh", use_name=False)
+
     # print("{}================================ error set".format(Fore.YELLOW))
     # dup_full = ph_error.duplicated(keep=False, subset=ph_error.columns[1:].drop(['atime', 'ctime']))
     # print("{}full duplicates:{} {}".format(Fore.GREEN,Fore.RESET, len(ph_error[dup_full])))
