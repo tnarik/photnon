@@ -206,22 +206,40 @@ def report_dupes(photos_df, dup_indexes):
   print("{}Should remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
               (photos_df.should_remove.value_counts(sort=False)).to_string()))
 
-def generate_dupes_info(photos_df, dup_indexes):
+def generate_dupes_info(photos_df, dup_indexes, bydigest=False):
     if len(photos_df[dup_indexes]) == 0:
       return
 
-    photos_df_dups = photos_df.loc[dup_indexes]
+    # All that shouldn't be removed
+    photos_df_dups = photos_df.loc[dup_indexes][~photos_df.loc[dup_indexes].should_remove]
+    #print(photos_df_dups.sort_values('digest')[['digest','name']])
+    print(len(photos_df_dups))
+    print(photos_df_dups[photos_df_dups.digest == 'dc60dde9e8254359fc90c21e22092e1f962e8ecd'])
+    if bydigest:
+      list_digest = photos_df_dups.digest.value_counts()
+      print(len(list_digest))
+      dup_digest_values = list_digest[list_digest > 1].index.values
+      print(len(photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)].digest.unique()))
+      print(len(photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)]))
+      for i,p in photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)].sort_values('digest').iterrows():
+        print(p.digest, p['folder'], p['name'])
 
-    folders = sorted(all_folders(photos_df_dups.folder.unique()))
-    folder_completer = WordCompleter(folders)
 
-    validator = Validator.from_callable(
-      lambda x: x in folders,
-      error_message='not a valid folder',
-      move_cursor_to_end=True)
-    preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
-      validator=validator)
-  
+    ''' to speed up testing '''
+    preferred_folder = '../flickr_backup/_whole'
+
+    '''
+        folders = sorted(all_folders(photos_df_dups.folder.unique()))
+        folder_completer = WordCompleter(folders)
+    
+        validator = Validator.from_callable(
+          lambda x: x in folders,
+          error_message='not a valid folder',
+          move_cursor_to_end=True)
+        preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
+          validator=validator)
+    '''  
+
     # Preserve 'preferred folder'. This doesn't work when duplicates are on the same one
     keep_list = photos_df_dups['folder'].str.match(preferred_folder)
     keepers = photos_df_dups[keep_list].index
@@ -233,29 +251,33 @@ def generate_dupes_info(photos_df, dup_indexes):
     # Keep the preferred folder verion
     photos_df.loc[keepers, 'should_remove'] = False
 
-    # Again (as it is a copy and the original has new data now)
-    photos_df_dups = photos_df.loc[dup_indexes]
+    # Again (as it is a copy and the original has new data now). Now we get those which should be removed
+    photos_df_dups_new = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes].should_remove]
     photos_df.loc[dup_indexes, 'persist_version'] = None
-    scheduled_removal = photos_df.loc[photos_df_dups[photos_df_dups.should_remove].index]
+    #scheduled_removal = photos_df.loc[photos_df_dups[photos_df_dups.should_remove].index]
+    scheduled_removal = photos_df.loc[photos_df_dups_new.index]
+
     #print(len(a))
-    photos_df.loc[photos_df_dups[photos_df_dups.should_remove].index, 'persist_version'] = scheduled_removal.apply(
-          lambda x: photos_df_dups[(photos_df_dups.digest==x.digest) & ~photos_df_dups.should_remove].index[0],
+    photos_df.loc[photos_df_dups_new.index, 'persist_version'] = scheduled_removal.apply(
+          lambda x: photos_df.loc[keepers][photos_df.loc[keepers].digest==x.digest].index[0],
+          #lambda x: photos_df_dups[(photos_df_dups.digest==x.digest) & ~photos_df_dups.should_remove].index[0],
+          #lambda x: photos_df.loc[dup_indexes][(photos_df.loc[dup_indexes].digest==x.digest) & ~photos_df.loc[dup_indexes].should_remove].index[0],
           axis=1)
 
 
-
-    for i, keeper in photos_df_dups[keep_list].iterrows():
-      # Locate ALL entries
-
-      # Mark them
-
-      # Un-mark the preferred one       
-      pass
+#
+    #for i, keeper in photos_df_dups[keep_list].iterrows():
+    #  # Locate ALL entries
+#
+    #  # Mark them
+#
+    #  # Un-mark the preferred one       
+    #  pass
 
       
 def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh", use_name=False):
     str = ""
-    for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove']].iterrows():
+    for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove']].sort_values('digest').iterrows():
       try:
         keeper = photos_df.loc[int(p.persist_version)]
       except:
@@ -391,24 +413,26 @@ if __name__ == "__main__":
                 (ph_ok[dup_digest].folder.value_counts()).to_string()))
 
       print("\n")
-      result = confirm(
+      result = True
+      '''confirm(
             suffix="(y/N)",
-            message="Do you want to process OK duplicates?")
+            message="Do you want to process OK duplicates?")'''
 
       if result:
         #ph_ok['path']=ph_ok[dup_full].apply(lambda x: os.path.join(x['folder'], x['name']), axis=1)
 
-        if confirm(
-              suffix="(y/N)",
-              message="Generate simple HTML for inspection?"):
-          print("HTML will be generated")
-          str = "<html><body>"
-          for i, p in ph_ok[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
-            src = os.path.join(p['folder'], p['name'])
-            str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
-          str +="</body></html>"
-          with open('inspection_OK.html', 'w') as f:
-            f.write(str)
+        if False:
+          if confirm(
+                suffix="(y/N)",
+                message="Generate simple HTML for inspection?"):
+            print("HTML will be generated")
+            str = "<html><body>"
+            for i, p in ph_ok[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
+              src = os.path.join(p['folder'], p['name'])
+              str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
+            str +="</body></html>"
+            with open('inspection_OK.html', 'w') as f:
+              f.write(str)
 
         # Keep everything by default
         ph_ok.loc[:, 'should_remove'] = False
@@ -419,7 +443,7 @@ if __name__ == "__main__":
         produce_dupes_script(ph_ok, dup_full, "dupes_full.sh", use_name=True)
 
         print("For digest duplicates, if they exist")
-        generate_dupes_info(ph_ok, dup_digest)
+        generate_dupes_info(ph_ok, dup_digest, bydigest=True)
         report_dupes(ph_ok, dup_digest)
         produce_dupes_script(ph_ok, dup_digest, "dupes_bydigest.sh", use_name=False)
 
