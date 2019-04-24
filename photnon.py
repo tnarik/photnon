@@ -326,7 +326,7 @@ def generate_dupes_info(photos_df, dup_indexes):
 
 
       
-def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh", use_name=False):
+def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
     str = ""
     for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].sort_values('digest').iterrows():
       try:
@@ -344,8 +344,9 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh", use_na
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Photon")
   parser.add_argument('-d', '--data',
-            help='data file',
-            dest='datafile')
+            nargs='+',
+            help='data files',
+            dest='datafiles')
   parser.add_argument('-v', '--verbose',
             help='verbose output',
             action='count',
@@ -357,10 +358,10 @@ if __name__ == "__main__":
   args = parser.parse_args()
   
   data = None
-  if args.datafile:
-    print("datafile '{}{}{}' has been specified\n".format(Fore.GREEN, args.datafile, Fore.RESET))
+  if args.datafiles:
+    print("datafiles '{}{}{}' have been specified\n".format(Fore.GREEN, ' / '.join(args.datafiles), Fore.RESET))
   else:
-    print('NO datafile specified')
+    print('NO datafiles specified')
 
 
   if args.space:
@@ -383,8 +384,8 @@ if __name__ == "__main__":
       ph_ok.loc[:, 'datetime'] = pd.to_datetime(ph_ok['datetime'], format="%Y:%m:%d %H:%M:%S")
 
       # Save data
-      if args.datafile:
-        datafilename = "{}.pho".format(args.datafile)
+      if args.datafiles:
+        datafilename = "{}.pho".format(args.datafiles[0])
         create_file = True
         if os.path.isfile(datafilename):  
           create_file = confirm(
@@ -403,11 +404,11 @@ if __name__ == "__main__":
       #print(ph_error)
       print("parsed by Hachoir: {}".format(count_hachoir))
   else:
-    if not args.datafile:
+    if not args.datafiles:
       parser.print_help()
     else:
       computed_columns = []
-      datafilename = "{}.pho".format(args.datafile)
+      datafilename = "{}.pho".format(args.datafiles[0])
 
       ph_ok = pd.read_hdf(datafilename, key='ok')
       ph_error = pd.read_hdf(datafilename, key='error')
@@ -496,26 +497,12 @@ if __name__ == "__main__":
           print("For full duplicates, if they exist")
           generate_dupes_info(photos_df, dup_full)
           report_dupes(photos_df, dup_full)
-          produce_dupes_script(photos_df, dup_full, "dupes_full_{}.sh".format(label), use_name=True)
   
           print("For digest duplicates, if they exist")
           generate_dupes_info(photos_df, dup_digest)
           report_dupes(photos_df, dup_digest)
-          produce_dupes_script(photos_df, dup_digest, "dupes_bydigest_{}.sh".format(label), use_name=False)
+          produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
 
         #datafilename = "{}_new.pho".format(args.datafile)
         #ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
         #ph_error.drop(computed_columns, axis=1).to_hdf(datafilename, key='error', format="table")
-
-    # print("{}================================ error set".format(Fore.YELLOW))
-    # dup_full = ph_error.duplicated(keep=False, subset=ph_error.columns[1:].drop(['atime', 'ctime']))
-    # print("{}full duplicates:{} {}".format(Fore.GREEN,Fore.RESET, len(ph_error[dup_full])))
-    # print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-    #           (ph_error[dup_full].folder.value_counts()).to_string()))
-
-
-    # list_digest = ph_error.digest.value_counts()
-    # dup_digest = list_digest[list_digest > 1].index.values
-    # print("{}digest duplicates:{} {}".format(Fore.GREEN,Fore.RESET, len(ph_error[ph_error.digest.isin(dup_digest)])))
-    # print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-    #           (ph_error[ph_error.digest.isin(dup_digest)].folder.value_counts()).to_string()))
