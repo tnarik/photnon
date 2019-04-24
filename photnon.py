@@ -39,6 +39,17 @@ CODE_INVALIDIMAGEDATA = 2
 CODE_WEIRD = 3
 CODE_SIZE_ZERO = 4
 
+REMOVAL_CODE_IGNORE = 0
+REMOVAL_CODE_POSIBLE = 1
+REMOVAL_CODE_SCHEDULE = 2
+REMOVAL_CODE_KEEP = 3
+
+REMOVAL_CODE_LEGEND = { REMOVAL_CODE_IGNORE: "Ignore", 
+                        REMOVAL_CODE_POSIBLE: "Considered",
+                        REMOVAL_CODE_SCHEDULE: "Scheduled",
+                        REMOVAL_CODE_KEEP: "Kept"}
+
+
 CHUNK_SIZE = 2**20 # 1 MB
 
 IGNORED_FOLDERS = ['.AppleDouble', '.git']
@@ -202,28 +213,33 @@ def all_folders(folders, result = set()):
 
 def report_dupes(photos_df, dup_indexes):
   print("{}Should remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
-              (photos_df[dup_indexes].should_remove.value_counts(sort=False)).to_string()))
+              (photos_df[dup_indexes].should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
   print("{}Should remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
-              (photos_df.should_remove.value_counts(sort=False)).to_string()))
+              (photos_df.should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
 
-def generate_dupes_info(photos_df, dup_indexes, bydigest=False):
+def generate_dupes_info(photos_df, dup_indexes):
     if len(photos_df[dup_indexes]) == 0:
       return
 
-    # All that shouldn't be removed
-    photos_df_dups = photos_df.loc[dup_indexes][~photos_df.loc[dup_indexes].should_remove]
+    # All that shouldn't be removed yet (and therefore susceptible of analysis)
+    photos_df_dups = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes].should_remove != REMOVAL_CODE_SCHEDULE]
+#    photos_df_dups = photos_df.loc[dup_indexes][~photos_df.loc[dup_indexes].should_remove]
     #print(photos_df_dups.sort_values('digest')[['digest','name']])
-    print(len(photos_df_dups))
-    print(photos_df_dups[photos_df_dups.digest == 'dc60dde9e8254359fc90c21e22092e1f962e8ecd'])
-    if bydigest:
-      list_digest = photos_df_dups.digest.value_counts()
-      print(len(list_digest))
-      dup_digest_values = list_digest[list_digest > 1].index.values
-      print(len(photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)].digest.unique()))
-      print(len(photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)]))
-      for i,p in photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)].sort_values('digest').iterrows():
-        print(p.digest, p['folder'], p['name'])
+    if False:
+      print(photos_df_dups[photos_df_dups.digest == 'dc60dde9e8254359fc90c21e22092e1f962e8ecd'])
 
+    # If there are entries already selected for removal... (result should be the same for the original run)
+    if True or any(photos_df.loc[dup_indexes].should_remove == REMOVAL_CODE_SCHEDULE):
+    #if True or any(photos_df.loc[dup_indexes].should_remove):
+      list_digest = photos_df_dups.digest.value_counts()
+      print("total removable entries:",len(photos_df_dups))
+      print("total removable digests:",len(list_digest))
+      dup_digest_values = list_digest[list_digest > 1].index.values
+      photos_df_dups = photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)]
+      print("total reduced removable entries:",len(photos_df_dups))
+      print("total reduced removable digests:", len(dup_digest_values))
+      #or i,p in photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)].sort_values('digest').iterrows():
+      # print(p.digest, p['folder'], p['name'])
 
     ''' to speed up testing '''
     preferred_folder = '../flickr_backup/_whole'
@@ -241,28 +257,77 @@ def generate_dupes_info(photos_df, dup_indexes, bydigest=False):
     '''  
 
     # Preserve 'preferred folder'. This doesn't work when duplicates are on the same one
-    keep_list = photos_df_dups['folder'].str.match(preferred_folder)
-    keepers = photos_df_dups[keep_list].index
+    persist_candidates_list = photos_df_dups['folder'].str.match(preferred_folder)
+    persist_candidates = photos_df_dups[persist_candidates_list].index
 
-    removable_digests = photos_df_dups[keep_list].digest.unique()
-    removable = photos_df_dups[photos_df_dups.digest.isin(removable_digests)].index
+    '''
+    The next section until the select_master definition should matter with the codes, because 
+    determination of final removability is done by the selector
+    '''
+    #code2d    
+    photos_df.loc[photos_df_dups.index, 'should_remove'] = REMOVAL_CODE_POSIBLE
+
+    '''
+    if len(persist_candidates) > 0:
+      removable_digests = photos_df_dups[persist_candidates_list].digest.unique()
+      removable = photos_df_dups[photos_df_dups.digest.isin(removable_digests)].index
+    else:
+      removable = photos_df_dups.index
+
     # Mark the duplicates with a digest matching those from the preferred folder
     photos_df.loc[removable, 'should_remove'] = True
     # Keep the preferred folder verion
-    photos_df.loc[keepers, 'should_remove'] = False
+    photos_df.loc[persist_candidates, 'should_remove'] = False
 
-    # Again (as it is a copy and the original has new data now). Now we get those which should be removed
-    photos_df_dups_new = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes].should_remove]
-    photos_df.loc[dup_indexes, 'persist_version'] = None
+    # Again (as it is a copy and the original has new data now). Now we get those NEW ONES which should be removed
+    #photos_df_dups_new = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes].should_remove]
+    photos_df_dups_new = photos_df.loc[photos_df_dups.index][photos_df.loc[photos_df_dups.index].should_remove]
+    #photos_df.loc[dup_indexes, 'persist_version'] = None
     #scheduled_removal = photos_df.loc[photos_df_dups[photos_df_dups.should_remove].index]
-    scheduled_removal = photos_df.loc[photos_df_dups_new.index]
+    '''
+
+    # Next two lines stay, they mean EVERY FILTERED DUPLICATE IS CONSIDERED FOR REMOVAL
+    #scheduled_removal = photos_df.loc[photos_df_dups_new.index]
+    scheduled_removal = photos_df.loc[photos_df_dups.index]
+    print(len(persist_candidates_list), len(persist_candidates), len(scheduled_removal))
 
     #print(len(a))
-    photos_df.loc[photos_df_dups_new.index, 'persist_version'] = scheduled_removal.apply(
-          lambda x: photos_df.loc[keepers][photos_df.loc[keepers].digest==x.digest].index[0],
+    def select_best_alternative(alternatives, msg):
+      if (alternatives['name'].nunique() == 1) and (alternatives['mtime'].nunique() == 1) and (alternatives['datetime_date'].nunique() == 1):
+        # If names, mtime and datetime_date are the same, choose at random (the first one, for instance)
+        print(alternatives['name'].unique()[0])
+        return alternatives.iloc[0]
+      else:
+        print(alternatives.iloc[0]['name'], msg, len(alternatives))
+        print(alternatives['name'].unique())
+        return None
+
+    def decide_removal_action(x, photos_df, persist_candidates):
+      master_candidates = photos_df.loc[persist_candidates][photos_df.loc[persist_candidates].digest==x.digest]
+      if len(master_candidates) == 1:
+        if master_candidates.index == x.name:
+          return {'persist_version': None, 'should_remove': REMOVAL_CODE_KEEP}
+        else:
+          return {'persist_version':master_candidates.index[0] , 'should_remove':REMOVAL_CODE_SCHEDULE}
+      elif len(master_candidates) > 1:
+        select_best_alternative(master_candidates, 'preferred')
+        return {'persist_version': "SEVERAL {}".format(x['name']), 'should_remove':REMOVAL_CODE_POSIBLE}
+      else:
+        # No pre-candidates, let the algorithm decide
+        best_alternative = select_best_alternative(scheduled_removal[scheduled_removal.digest==x.digest], 'digests')
+        if (best_alternative is not None) and (best_alternative.name != x.name):
+          return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
+        else:
+          # We want to keep at least one
+          return {'persist_version': None, 'should_remove':REMOVAL_CODE_POSIBLE}
+
+
+    photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = scheduled_removal.apply(
+          lambda x: decide_removal_action(x, photos_df, persist_candidates),
+          #lambda x: photos_df.loc[keepers][photos_df.loc[keepers].digest==x.digest].index[0],
           #lambda x: photos_df_dups[(photos_df_dups.digest==x.digest) & ~photos_df_dups.should_remove].index[0],
           #lambda x: photos_df.loc[dup_indexes][(photos_df.loc[dup_indexes].digest==x.digest) & ~photos_df.loc[dup_indexes].should_remove].index[0],
-          axis=1)
+          axis=1, result_type='expand')
 
 
 #
@@ -277,18 +342,13 @@ def generate_dupes_info(photos_df, dup_indexes, bydigest=False):
       
 def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh", use_name=False):
     str = ""
-    for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove']].sort_values('digest').iterrows():
+    for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].sort_values('digest').iterrows():
       try:
         keeper = photos_df.loc[int(p.persist_version)]
       except:
-        print(p)
-      #if use_name:
-      #  keeper = photos_df[(photos_df.should_remove == False) &
-      #                 (photos_df.digest == p.digest) & 
-      #                 (photos_df['name'] == p['name'])].iloc[0]
-      #else:
-      #  keeper = photos_df[(photos_df.should_remove == False) &
-      #                 (photos_df.digest == p.digest)].iloc[0]        
+        #print(p)
+        keeper = {'folder':'', 'name':''}
+      
       str += "diff \"{}\" \"{}\"".format(os.path.join(keeper['folder'], keeper['name']), os.path.join(p['folder'], p['name']))
       str += " && echo rm \"{}\"\n".format(os.path.join(p['folder'], p['name']))
     with open(dupes_script, 'w') as f:
@@ -389,7 +449,7 @@ if __name__ == "__main__":
       dup_full = ph_ok.duplicated(keep=False, subset=ph_ok.columns[1:].drop(['atime', 'ctime']))
       dup_full_except_first = ph_ok.duplicated(keep='first', subset=ph_ok.columns[1:].drop(['atime', 'ctime']))
       dup_full_reduced = dup_full ^ dup_full_except_first
-      print("{}full duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
+      print("{}as full duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
          len(ph_ok[dup_full]),
          sum(dup_full_reduced),
          len(ph_ok),
@@ -402,7 +462,7 @@ if __name__ == "__main__":
       list_digest = ph_ok.digest.value_counts()
       dup_digest_values = list_digest[list_digest > 1].index.values
       dup_digest = ph_ok.digest.isin(dup_digest_values)
-      print("{}digest duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
+      print("{}as digest duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
           len(ph_ok[dup_digest]),
           len(dup_digest_values),
           len(ph_ok),
@@ -435,7 +495,8 @@ if __name__ == "__main__":
               f.write(str)
 
         # Keep everything by default
-        ph_ok.loc[:, 'should_remove'] = False
+        ph_ok.loc[:, 'should_remove'] = False #REMOVAL_CODE_IGNORE
+        ph_ok.loc[:, 'persist_version'] = None
 
         print("For full duplicates, if they exist")
         generate_dupes_info(ph_ok, dup_full)
@@ -443,7 +504,7 @@ if __name__ == "__main__":
         produce_dupes_script(ph_ok, dup_full, "dupes_full.sh", use_name=True)
 
         print("For digest duplicates, if they exist")
-        generate_dupes_info(ph_ok, dup_digest, bydigest=True)
+        generate_dupes_info(ph_ok, dup_digest)
         report_dupes(ph_ok, dup_digest)
         produce_dupes_script(ph_ok, dup_digest, "dupes_bydigest.sh", use_name=False)
 
