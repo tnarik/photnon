@@ -377,6 +377,10 @@ if __name__ == "__main__":
             help='verbose output',
             action='count',
             default=0)
+  parser.add_argument('-f', '--force',
+            help='force reprocessing of all entries of a datafile',
+            action='store_true',
+            default=False)
   parser.add_argument('-s', '--space',
             nargs='+',
             help='files, folders or pattern space to explore',
@@ -434,6 +438,9 @@ if __name__ == "__main__":
     if not args.datafiles:
       parser.print_help()
     else:
+      computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
+      divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
+
       ph_ok = pd.DataFrame()
       ph_error = pd.DataFrame()
       for datafile in args.datafiles:
@@ -453,12 +460,12 @@ if __name__ == "__main__":
         ph_ok = pd.concat([ph_ok, pd.read_hdf("{}.pho".format(datafile), key='ok')])
         ph_error = pd.concat([ph_error, pd.read_hdf("{}.pho".format(datafile), key='error')])
 
-      if 'should_remove' in ph_ok.columns:
-        ph_ok = ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE]
-      if 'should_remove' in ph_error.columns:
-        ph_error = ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE]
+      if not args.force:
+        if 'should_remove' in ph_ok.columns:
+          ph_ok = ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE]
+        if 'should_remove' in ph_error.columns:
+          ph_error = ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE]
 
-      computed_columns = []
       num_ok = len(ph_ok)
       num_error = len(ph_error)
       num_total = num_ok + num_error
@@ -467,9 +474,7 @@ if __name__ == "__main__":
       print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
 
       ph_ok['mtime_date'] = ph_ok.mtime.apply(lambda x: x.date())
-      computed_columns.append('mtime_date')
       ph_ok['datetime_date'] = ph_ok.datetime.apply(lambda x: x.date())
-      computed_columns.append('datetime_date')
       ph_ok['second_discrepancy'] = (ph_ok.datetime - ph_ok.mtime).apply(lambda x: abs(x.total_seconds()))
 
       print("{}% matching times{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
@@ -477,6 +482,10 @@ if __name__ == "__main__":
 
       print("{}% matching dates{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
                 (ph_ok.mtime_date == ph_ok.datetime_date).value_counts(normalize=True)[True]))
+
+
+      print("{}% timeless{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+                (ph_ok.timeless).value_counts(normalize=True)[True]))
 
       print("{0}% with discrepancy{1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
                 sum(ph_ok.second_discrepancy <= 60)/len(ph_ok),
@@ -486,8 +495,8 @@ if __name__ == "__main__":
       for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
         print("{}================================ {} set".format(Fore.YELLOW, label))
         # All duplicates
-        dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(['atime', 'ctime']))
-        dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(['atime', 'ctime']))
+        dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(divergent_columns))
+        dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(divergent_columns))
         # Not used, but I was logging that before
         dup_full_reduced = dup_full ^ dup_full_except_first
 
@@ -565,6 +574,6 @@ if __name__ == "__main__":
           report_dupes(photos_df, dup_digest, sum(dup_digest_except_first))
           produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
 
-        datafilename = "{}_new.pho".format('test')
+        datafilename = "{}_new.pho".format('back')
         ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
         ph_error.to_hdf(datafilename, key='error', format="table")
