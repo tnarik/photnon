@@ -226,12 +226,18 @@ def all_folders(folders, result = set()):
       all_folders(head, result)
   return result
 
-def report_dupes(photos_df, dup_indexes):
+def report_dupes(photos_df, dup_indexes, goal = None):
   print("{}Remove report:{}".format(Fore.GREEN,Fore.RESET))
   print("schedule removal: listed {} / total: {}".format(
           sum(photos_df[dup_indexes].should_remove == REMOVAL_CODE_SCHEDULE),
           sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE)
         ))
+  if goal:
+    if goal == sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE):
+      print("  {} - REMOVAL GOAL ACHIEVED{}".format(Fore.GREEN,Fore.RESET))
+    else:
+      print("  {} - REMOVAL GOAL NOT YET ACHIEVED {} ({} instead of {})".format(Fore.YELLOW,Fore.RESET, sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE), goal))
+
   #print("{}Remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
   #            (photos_df[dup_indexes].should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
   #print("{}Remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
@@ -534,18 +540,17 @@ if __name__ == "__main__":
               message="Do you want to process OK duplicates?")'''
   
         if result:
-          #if False:
-          #  if confirm(
-          #        suffix="(y/N)",
-          #        message="Generate simple HTML for inspection?"):
-          #    print("HTML will be generated")
-          #    str = "<html><body>"
-          #    for i, p in photos_df[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
-          #      src = os.path.join(p['folder'], p['name'])
-          #      str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
-          #    str +="</body></html>"
-          #    with open('inspection_OK.html', 'w') as f:
-          #      f.write(str)
+          #if confirm(
+          #      suffix="(y/N)",
+          #      message="Generate simple HTML for inspection?"):
+          #  print("HTML will be generated")
+          #  str = "<html><body>"
+          #  for i, p in photos_df[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
+          #    src = os.path.join(p['folder'], p['name'])
+          #    str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
+          #  str +="</body></html>"
+          #  with open('inspection_OK.html', 'w') as f:
+          #    f.write(str)
   
           # Keep everything by default
           photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
@@ -553,14 +558,13 @@ if __name__ == "__main__":
   
           print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
           generate_dupes_info(photos_df, dup_full)
-          report_dupes(photos_df, dup_full)
+          report_dupes(photos_df, dup_full, sum(dup_digest_except_first))
   
           print("{}   - digest -{}".format(Fore.GREEN,Fore.RESET))
           generate_dupes_info(photos_df, dup_digest)
-          report_dupes(photos_df, dup_digest)
+          report_dupes(photos_df, dup_digest, sum(dup_digest_except_first))
           produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
 
         datafilename = "{}_new.pho".format('test')
         ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
-        #ph_error.drop(computed_columns, axis=1).to_hdf(datafilename, key='error', format="table")
         ph_error.to_hdf(datafilename, key='error', format="table")
