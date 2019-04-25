@@ -148,7 +148,7 @@ def identify_file(path, name):
       else:
         if args.verbose: print("   {}NOT even NOW - {}".format(Fore.RED, name))
 
-  return (datetime, make, model, digest, mime, code, atime, mtime, ctime)
+  return (datetime, make, model, digest, mime, code, stats.st_size, atime, mtime, ctime)
 
 def filter_out(n, f):
   for ign in IGNORED_FOLDERS:
@@ -171,8 +171,8 @@ def explore(space):
   for source in space:
     for path in glob.iglob(source):
       if os.path.isfile(path):
-        datetime, make, model, digest, mime, code, atime, mtime, ctime = identify_file(path, os.path.split(path)[1])
-        data.append([*os.path.split(path), datetime, make, model, digest, code, atime, mtime, ctime ])
+        datetime, make, model, digest, mime, code, size, atime, mtime, ctime = identify_file(path, os.path.split(path)[1])
+        data.append([*os.path.split(path), datetime, make, model, digest, code, size, atime, mtime, ctime ])
       else:
         # Pre-calculation of data size to process
         total_size = 0
@@ -188,15 +188,30 @@ def explore(space):
             n, f = filter_out(n,f)
             for file in tqdm(f):
               pbar.update(os.stat(os.path.join(p, file)).st_size)
-              datetime, make, model, digest, mime, code, atime, mtime, ctime = identify_file(os.path.join(p,file), file)
+              datetime, make, model, digest, mime, code, size, atime, mtime, ctime = identify_file(os.path.join(p,file), file)
               if code is None:
                 continue
       
-              data.append([p, file, datetime, make, model, digest, mime, code, atime, mtime, ctime ])
+              data.append([p, file, datetime, make, model, digest, mime, code, size, atime, mtime, ctime ])
               # file sizes # pbar.update()
 
   return data
 
+def bsize_value(value):
+  unit_divisor=1000
+  units = {0: 'B',
+           1: 'kB',
+           2: 'MB',
+           3: 'GB',
+           4: 'TB'
+    }
+
+  level = 0
+  while True:
+    if value < unit_divisor: break
+    value = value/unit_divisor
+    level +=1
+  return(value, units[level])
 
 def all_folders(folders, result = set()):
   if isinstance(folders, np.ndarray):
@@ -212,34 +227,36 @@ def all_folders(folders, result = set()):
   return result
 
 def report_dupes(photos_df, dup_indexes):
-  print("{}Should remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
-              (photos_df[dup_indexes].should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
-  print("{}Should remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
-              (photos_df.should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
+  print("{}Remove report:{}".format(Fore.GREEN,Fore.RESET))
+  print("schedule removal: listed {} / total: {}".format(
+          sum(photos_df[dup_indexes].should_remove == REMOVAL_CODE_SCHEDULE),
+          sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE)
+        ))
+  #print("{}Remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
+  #            (photos_df[dup_indexes].should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
+  #print("{}Remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
+  #            (photos_df.should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
 
 def generate_dupes_info(photos_df, dup_indexes):
     if len(photos_df[dup_indexes]) == 0:
       return
 
+    print("{}Remove pre-report{}".format(Fore.GREEN,Fore.RESET))
     # All that shouldn't be removed yet (and therefore susceptible of analysis)
     photos_df_dups = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes].should_remove != REMOVAL_CODE_SCHEDULE]
-#    photos_df_dups = photos_df.loc[dup_indexes][~photos_df.loc[dup_indexes].should_remove]
-    #print(photos_df_dups.sort_values('digest')[['digest','name']])
-    if False:
-      print(photos_df_dups[photos_df_dups.digest == 'dc60dde9e8254359fc90c21e22092e1f962e8ecd'])
-
-    # If there are entries already selected for removal... (result should be the same for the original run)
-    if True or any(photos_df.loc[dup_indexes].should_remove == REMOVAL_CODE_SCHEDULE):
-    #if True or any(photos_df.loc[dup_indexes].should_remove):
-      list_digest = photos_df_dups.digest.value_counts()
-      print("total removable entries:",len(photos_df_dups))
-      print("total removable digests:",len(list_digest))
-      dup_digest_values = list_digest[list_digest > 1].index.values
-      photos_df_dups = photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)]
-      print("total reduced removable entries:",len(photos_df_dups))
-      print("total reduced removable digests:", len(dup_digest_values))
-      #or i,p in photos_df_dups[photos_df_dups.digest.isin(dup_digest_values)].sort_values('digest').iterrows():
-      # print(p.digest, p['folder'], p['name'])
+    list_digest = photos_df_dups.digest.value_counts()
+    print("entries in process: {} / possible removal: {}".format(
+        len(photos_df_dups),
+        len(photos_df_dups) - len(list_digest)
+      ))
+    # Which from the intended set can we really check now?
+    # Let's reduce the intended set based on duplicates ocurring within it
+    list_digest_dup = list_digest[list_digest > 1].index.values
+    photos_df_dups = photos_df_dups[photos_df_dups.digest.isin(list_digest_dup)]
+    print("filtered entries in process: {} / possible removal: {}".format(
+        len(photos_df_dups),
+        len(photos_df_dups) - len(list_digest_dup)
+      ))
 
     ''' to speed up testing '''
     preferred_folder = '../flickr_backup/_whole'
@@ -263,16 +280,15 @@ def generate_dupes_info(photos_df, dup_indexes):
     photos_df.loc[photos_df_dups.index, 'should_remove'] = REMOVAL_CODE_POSIBLE
 
     decide_removal_entries = photos_df.loc[photos_df_dups.index]
-    #print(len(persist_candidates_list), len(persist_candidates), len(decide_removal_entries))
-
 
     def select_best_alternative(alternatives, msg):
       '''
       This works like this:
       1. If a single alternative, choose that: This is the case for name based duplication (preferred folder wins)
-      2. If several are equivalent, choose the first one: they have the same name ()
-      3. Choose better time info
-      4. Choose better name
+      2. If several are equivalent, choose the first one: they have the same name
+      3. Choose better name when times match (have different clauses depending on which times match, just in case) 
+      4. If the only match is the digest (check it again), then choose the lower 'mtime' (older file)
+      5. No alternative is good
       '''
       # Single alternative
       if len(alternatives) == 1:
@@ -289,6 +305,8 @@ def generate_dupes_info(photos_df, dup_indexes):
       elif (alternatives['datetime'].nunique() == 1):
         # Internal time is the same
         return alternatives.loc[alternatives['name'].str.split('.', expand=True)[0].sort_values().index[0]]
+      elif (alternatives['digest'].nunique() == 1):
+        return alternatives.sort_values('mtime').iloc[0]
 
       # Really, at least the datetime should be equivalent
       return None
@@ -336,23 +354,25 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
         keeper = {'folder':'', 'name':''}
       
       str += "diff \"{}\" \"{}\"".format(os.path.join(keeper['folder'], keeper['name']), os.path.join(p['folder'], p['name']))
-      str += " && echo rm \"{}\"\n".format(os.path.join(p['folder'], p['name']))
+      str += " && echo \'rm \"{}\"\'\n".format(os.path.join(p['folder'], p['name']))
     with open(dupes_script, 'w') as f:
         f.write(str)
 
 
 if __name__ == "__main__":
+  working_info = { 'wd': [os.getcwd()],
+                   'hostname': [os.uname()[1]] }
   parser = argparse.ArgumentParser(description="Photon")
   parser.add_argument('-d', '--data',
             nargs='+',
-            help='data files',
+            help='data files. if -s is used, only the first datafile will be taken into account',
             dest='datafiles')
   parser.add_argument('-v', '--verbose',
             help='verbose output',
             action='count',
             default=0)
   parser.add_argument('-s', '--space',
-            nargs='*',
+            nargs='+',
             help='files, folders or pattern space to explore',
             dest='space')
   args = parser.parse_args()
@@ -370,7 +390,7 @@ if __name__ == "__main__":
     if len(data) > 0:
       print("{} entries".format(len(data)))
 
-      ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'make', 'model', 'digest', 'mime', 'code', 'atime', 'mtime', 'ctime' ])
+      ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'make', 'model', 'digest', 'mime', 'code', 'size', 'atime', 'mtime', 'ctime' ])
 
       # split into OK and ERROR files
       ph_ok, ph_error = ph[ph.code == CODE_OK].copy(), ph[ph.code != CODE_OK].copy()
@@ -398,6 +418,7 @@ if __name__ == "__main__":
         if create_file:
           ph_ok.to_hdf(datafilename, key='ok', format="table")
           ph_error.to_hdf(datafilename, key='error', format="table")
+          pd.DataFrame(working_info).to_hdf(datafilename, key='info', format="table")
 
       #print(ph_ok.datetime)
       print("{} ok / {} error".format(len(ph_ok), len(ph_error)))
@@ -407,102 +428,139 @@ if __name__ == "__main__":
     if not args.datafiles:
       parser.print_help()
     else:
-      computed_columns = []
-      datafilename = "{}.pho".format(args.datafiles[0])
+      ph_ok = pd.DataFrame()
+      ph_error = pd.DataFrame()
+      for datafile in args.datafiles:
+        store = pd.HDFStore("{}.pho".format(datafile))
+        if '/info' in store:
+          store.close()
+          ph_working_info = pd.read_hdf("{}.pho".format(datafile), key='info').iloc[0]
+          if ph_working_info['hostname'] != working_info['hostname'][0]:
+            print("Data file was generated at {}, but analysis is running on {}".format(
+                ph_working_info['hostname'], working_info['hostname'][0]
+              ))
+          print(ph_working_info)
+        else:
+          store.close()
+          print("{}Datafile '{}{}{}' doesn't contain 'info'{}: be extra vigilant\n".format(Fore.RED, Fore.GREEN, "{}.pho".format(datafile), Fore.RED, Fore.RESET))
 
-      ph_ok = pd.read_hdf(datafilename, key='ok')
-      ph_error = pd.read_hdf(datafilename, key='error')
+        ph_ok = pd.concat([ph_ok, pd.read_hdf("{}.pho".format(datafile), key='ok')])
+        ph_error = pd.concat([ph_error, pd.read_hdf("{}.pho".format(datafile), key='error')])
 
       if 'should_remove' in ph_ok.columns:
         ph_ok = ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE]
       if 'should_remove' in ph_error.columns:
         ph_error = ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE]
 
+      computed_columns = []
       num_ok = len(ph_ok)
       num_error = len(ph_error)
       num_total = num_ok + num_error
       print("total: {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
       print("{}================================".format(Fore.YELLOW))
-      print("{}percentage of errors{}: {} %".format(Fore.GREEN, Fore.RESET, 100* num_error/ num_total))
+      print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
 
       ph_ok['mtime_date'] = ph_ok.mtime.apply(lambda x: x.date())
       computed_columns.append('mtime_date')
       ph_ok['datetime_date'] = ph_ok.datetime.apply(lambda x: x.date())
       computed_columns.append('datetime_date')
-      ph_ok['second_discrepancy'] = (ph_ok.datetime - ph_ok.mtime).apply(lambda x: x.total_seconds())
+      ph_ok['second_discrepancy'] = (ph_ok.datetime - ph_ok.mtime).apply(lambda x: abs(x.total_seconds()))
 
-      print("{}matching times (%):\n{}{}".format(Fore.GREEN,Fore.RESET,
-                ((ph_ok.mtime == ph_ok.datetime).value_counts(normalize=True, sort=False) *100).to_string()))
+      print("{}% matching times{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+                (ph_ok.mtime == ph_ok.datetime).value_counts(normalize=True, sort=False)[True]))
 
-      print("{}matching dates (%):\n{}{}".format(Fore.GREEN,Fore.RESET,
-                ((ph_ok.mtime_date == ph_ok.datetime_date).value_counts(normalize=True, sort=False) *100).to_string()))
+      print("{}% matching dates{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+                (ph_ok.mtime_date == ph_ok.datetime_date).value_counts(normalize=True)[True]))
 
-      print("{}less than hour discrepancy (%):\n{}{}".format(Fore.GREEN,Fore.RESET,
-                ((ph_ok.second_discrepancy <= 3600).value_counts(normalize=True, sort=False) *100).to_string()))
+      print("{0}% with discrepancy{1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
+                sum(ph_ok.second_discrepancy <= 60)/len(ph_ok),
+                sum(ph_ok.second_discrepancy <= 3600)/len(ph_ok),
+                sum(ph_ok.second_discrepancy <= 24*3600)/len(ph_ok)))
 
       for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
         print("{}================================ {} set".format(Fore.YELLOW, label))
+        # All duplicates
         dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(['atime', 'ctime']))
         dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(['atime', 'ctime']))
+        # Not used, but I was logging that before
         dup_full_reduced = dup_full ^ dup_full_except_first
-        print("{}as full duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
-           len(photos_df[dup_full]),
-           sum(dup_full_reduced),
-           len(photos_df),
-           sum (~dup_full_except_first)
-           ))
-        if len(photos_df[dup_full]) > 0:
-          print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-                    (photos_df[dup_full].folder.value_counts()).to_string()))
+
+        #if len(photos_df[dup_full]) > 0:
+        #  print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
+        #            (photos_df[dup_full].folder.value_counts()).to_string()))
   
+        # Digest duplicates, computed differently. Clearly slower and more complex (more lines) but it doesn't matter that much
         list_digest = photos_df.digest.value_counts()
         dup_digest_values = list_digest[list_digest > 1].index.values
         dup_digest = photos_df.digest.isin(dup_digest_values)
-        print("{}as digest duplicates:{} {} -> {} (total: {} -> {})".format(Fore.GREEN,Fore.RESET,
-            len(photos_df[dup_digest]),
-            len(dup_digest_values),
-            len(photos_df),
-            len(list_digest)
+        dup_digest_except_first = photos_df.duplicated(keep='first', subset=['digest'])
+
+        #if len(photos_df[dup_digest]) > 0:
+        #  print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
+        #          (photos_df[dup_digest].folder.value_counts()).to_string()))
+        print("photos {}, after reducing:".format(
+          len(photos_df)
+          ))
+        print("   - full   -> {} (removing {} and processing {})".format(
+          sum(~dup_full_except_first),
+          sum(dup_full_except_first),
+          sum(dup_full)
+          ))
+        print("   - digest -> {} (removing {} and processing {})".format(
+          sum(~dup_digest_except_first),
+          sum(dup_digest_except_first),
+          sum(dup_digest)
+          ))
+
+        if 'size' in photos_df:
+          print("size {:.3f} {}, after reducing:".format(
+            *bsize_value(photos_df['size'].sum())
             ))
-        if len(photos_df[dup_digest]) > 0:
-          print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-                  (photos_df[dup_digest].folder.value_counts()).to_string()))
-  
-        print("\n")
+          print("   - full   -> {:.3f} {} (removing {:.3f} {} and processing {:.3f} {})".format(
+            *bsize_value(photos_df[~dup_full_except_first]['size'].sum()),
+            *bsize_value(photos_df[dup_full_except_first]['size'].sum()),
+            *bsize_value(photos_df[dup_full]['size'].sum())
+            ))
+          print("   - digest -> {:.3f} {} (removing {:.3f} {} and processing {:.3f} {})".format(
+            *bsize_value(photos_df[~dup_digest_except_first]['size'].sum()),
+            *bsize_value(photos_df[dup_digest_except_first]['size'].sum()),
+            *bsize_value(photos_df[dup_digest]['size'].sum())
+            ))
+        print()
+
         result = True
         '''confirm(
               suffix="(y/N)",
               message="Do you want to process OK duplicates?")'''
   
         if result:
-          #photos_df['path']=photos_df[dup_full].apply(lambda x: os.path.join(x['folder'], x['name']), axis=1)
-  
-          if False:
-            if confirm(
-                  suffix="(y/N)",
-                  message="Generate simple HTML for inspection?"):
-              print("HTML will be generated")
-              str = "<html><body>"
-              for i, p in photos_df[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
-                src = os.path.join(p['folder'], p['name'])
-                str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
-              str +="</body></html>"
-              with open('inspection_OK.html', 'w') as f:
-                f.write(str)
+          #if False:
+          #  if confirm(
+          #        suffix="(y/N)",
+          #        message="Generate simple HTML for inspection?"):
+          #    print("HTML will be generated")
+          #    str = "<html><body>"
+          #    for i, p in photos_df[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
+          #      src = os.path.join(p['folder'], p['name'])
+          #      str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
+          #    str +="</body></html>"
+          #    with open('inspection_OK.html', 'w') as f:
+          #      f.write(str)
   
           # Keep everything by default
           photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
           photos_df.loc[:, 'persist_version'] = -1
   
-          print("For full duplicates, if they exist")
+          print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
           generate_dupes_info(photos_df, dup_full)
           report_dupes(photos_df, dup_full)
   
-          print("For digest duplicates, if they exist")
+          print("{}   - digest -{}".format(Fore.GREEN,Fore.RESET))
           generate_dupes_info(photos_df, dup_digest)
           report_dupes(photos_df, dup_digest)
           produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
 
-        #datafilename = "{}_new.pho".format(args.datafile)
-        #ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
+        datafilename = "{}_new.pho".format('test')
+        ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
         #ph_error.drop(computed_columns, axis=1).to_hdf(datafilename, key='error', format="table")
+        ph_error.to_hdf(datafilename, key='error', format="table")
