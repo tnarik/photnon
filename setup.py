@@ -20,6 +20,17 @@ setuptools.setup(
 	},
 	package_dir={'': 'src'},
     packages=setuptools.find_namespace_packages(where='src'),
+    install_requires=[
+          'pandas',
+          'numpy',
+          'prompt_toolkit',
+          'colorama',
+          'piexif',
+          'tables',
+          'python-magic',
+          'hachoir',
+          'tqdm'
+      ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

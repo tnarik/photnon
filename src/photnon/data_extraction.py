@@ -23,8 +23,6 @@ import time
 import pandas as pd
 from datetime import datetime as dt
 
-import argparse
-
 from colorama import init, Fore
 init(autoreset=True)
 
@@ -46,7 +44,7 @@ for pat in IGNORED_PATTERNS:
 IGNORED_PATTERNS = patterns
 
 count_hachoir = 0
-def identify_file(path, name):
+def identify_file(path, name, verbose=0):
   global count_hachoir
   datetime = None
   make = None
@@ -71,7 +69,7 @@ def identify_file(path, name):
       mime = magic.from_file(path, mime=True)
   
       pic_exif = piexif.load(path)
-      if args.verbose > 4 : print(pic_exif)
+      if verbose > 4 : print(pic_exif)
       try:
         #36867 - taken
         #36868 - digitized
@@ -80,17 +78,17 @@ def identify_file(path, name):
         if (36867 in pic_exif["Exif"]):
           #and ( pic_exif["Exif"][36867] == pic_exif["Exif"][36868]):
           datetime = pic_exif["Exif"][36867].decode('utf-8')
-          if args.verbose > 1 : print("{}EXIF - {}".format(Fore.BLUE, name))
+          if verbose > 1 : print("{}EXIF - {}".format(Fore.BLUE, name))
         elif 306 in pic_exif['0th']:
           datetime = pic_exif['0th'][306].decode('utf-8')
-          if args.verbose > 1 : print("{}0th - {}".format(Fore.WHITE, name))
+          if verbose > 1 : print("{}0th - {}".format(Fore.WHITE, name))
         elif 'GPS' in pic_exif and 29 in pic_exif['GPS']:
           datetime = pic_exif['GPS'][29].decode('utf-8')
-          if args.verbose > 1 : print("{}GPS - {}".format(Fore.GREEN, name))
+          if verbose > 1 : print("{}GPS - {}".format(Fore.GREEN, name))
         else:
           code = CODE_WEIRD
-          if args.verbose: print("{}ABSENT - {}".format(Fore.YELLOW, name))
-          if args.verbose > 2 : print(pic_exif)       
+          if verbose: print("{}ABSENT - {}".format(Fore.YELLOW, name))
+          if verbose > 2 : print(pic_exif)       
         # make
         if 42035 in pic_exif["Exif"]:
           make = pic_exif["Exif"][42035].decode('utf-8')
@@ -106,10 +104,10 @@ def identify_file(path, name):
       except KeyError:
         code = CODE_ERROR
         print("{}KEY ERROR - {}".format(Fore.RED, name))
-        if args.verbose > 2: print(pic_exif)
+        if verbose > 2: print(pic_exif)
     except piexif._exceptions.InvalidImageDataError:
       code = CODE_INVALIDIMAGEDATA
-      if args.verbose: print("{}NOT an EXIF picture - {}".format(Fore.RED, name))
+      if verbose: print("{}NOT an EXIF picture - {}".format(Fore.RED, name))
   
       parser = createParser(path)
       #print(path)
@@ -126,11 +124,11 @@ def identify_file(path, name):
   
             code = CODE_OK
             count_hachoir += 1
-            if args.verbose: print("   {}NOW! - {}".format(Fore.GREEN, name))
+            if verbose: print("   {}NOW! - {}".format(Fore.GREEN, name))
         except:
-          if args.verbose > 1: print("{} - {}".format(name, metadata))
+          if verbose > 1: print("{} - {}".format(name, metadata))
       else:
-        if args.verbose: print("   {}NOT even NOW - {}".format(Fore.RED, name))
+        if verbose: print("   {}NOT even NOW - {}".format(Fore.RED, name))
 
   return (datetime, make, model, digest, mime, code, stats.st_size, atime, mtime, ctime)
 
@@ -181,17 +179,18 @@ def explore(space):
 
   return data
 
-def extract_data(space, datafile = None, verbose=0):
+def extract_data(space, datafile = None, verbose=0, working_info=None, force=False):
   if verbose >= 1: print("As a list of spaces has been specified, analysis will take place\n")
 
-  data = explore(space)  
+  data = explore(space) 
+
   if len(data) > 0:
-    print("{} entries".format(len(data)))
+    print("\n{} entries ({} parsed by Hachoir)".format(len(data), count_hachoir))
 
     ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'make', 'model', 'digest', 'mime', 'code', 'size', 'atime', 'mtime', 'ctime' ])
-
     # split into OK and ERROR files
     ph_ok, ph_error = ph[ph.code == CODE_OK].copy(), ph[ph.code != CODE_OK].copy()
+    print("{} ok / {} error".format(len(ph_ok), len(ph_error)))
 
     # Add dummy time to 'timeless' timestamps. Tag those entries as well.
     dates_with_no_time = ~ph_ok.datetime.str.match("^\d{4}:\d{2}:\d{2} ")   
@@ -206,19 +205,14 @@ def extract_data(space, datafile = None, verbose=0):
       datafilename = "{}.pho".format(datafile)
       create_file = True
       if os.path.isfile(datafilename):  
-        create_file = confirm(
+        create_file = force or confirm(
           suffix="(y/N)",
           message="Do you want to overwrite existing datafile '{}'?".format(datafilename))
         if not create_file:
-          print("{}NOT overwritting".format(Fore.YELLOW))
+          print("NOT overwritting '{}{}{}'".format(Fore.YELLOW, datafilename, Fore.RESET))
         else:
-          print("{}overwritting".format(Fore.GREEN))
+          print("overwritting '{}{}{}'".format(Fore.GREEN, datafilename, Fore.RESET))
       if create_file:
         ph_ok.to_hdf(datafilename, key='ok', format="table")
         ph_error.to_hdf(datafilename, key='error', format="table")
         pd.DataFrame(working_info).to_hdf(datafilename, key='info', format="table")
-
-    #print(ph_ok.datetime)
-    print("{} ok / {} error".format(len(ph_ok), len(ph_error)))
-    #print(ph_error)
-    print("parsed by Hachoir: {}".format(count_hachoir))
