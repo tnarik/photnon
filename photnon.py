@@ -461,13 +461,13 @@ if __name__ == "__main__":
         store = pd.HDFStore("{}.pho".format(datafile))
         if '/info' in store:
           store.close()
-          last_working_info = pd.read_hdf("{}.pho".format(datafile), key='info').iloc[0]
-          if last_working_info['hostname'] != working_info['hostname'][0]:
+          last_working_info = pd.read_hdf("{}.pho".format(datafile), key='info')
+          if last_working_info.loc[0, 'hostname'] != working_info['hostname'][0]:
             print("Data file was generated at {}, but analysis is running on {}".format(
-                last_working_info['hostname'], working_info['hostname'][0]
+                last_working_info.loc[0, 'hostname'], working_info['hostname'][0]
               ))
           ph_working_info = pd.concat([ph_working_info, last_working_info])
-          print(ph_working_info)
+          #print(ph_working_info)
         else:
           store.close()
           print("{}Datafile '{}{}{}' doesn't contain 'info':{} be extra vigilant\n".format(Fore.RED, Fore.GREEN, datafile, Fore.RED, Fore.RESET))
@@ -614,7 +614,7 @@ if __name__ == "__main__":
 
         ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
         ph_error.to_hdf(datafilename, key='error', format="table")
-        if ph_working_info:
+        if len(ph_working_info) > 0:
           # This only make sense when ONE (1) datafile is used as input. If combining, ....
           pd.DataFrame(ph_working_info).to_hdf(datafilename, key='info', format="table")
 
@@ -624,6 +624,7 @@ if __name__ == "__main__":
             #print(tempdir)
             sys.argv = ['ptrepack', datafilename, os.path.join(tempdir,'repackedfile')]
             ptrepack.main()
-            os.rename(datafilename, "{}_back".format(datafilename))
+            if False:
+              os.rename(datafilename, "{}_back".format(datafilename))
             os.rename(os.path.join(tempdir,'repackedfile'), datafilename)
 
