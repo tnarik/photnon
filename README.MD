@@ -1,4 +1,4 @@
-#Photo Noncer
+# Photo Noncer
 
 A project to inspect picture files, read timestamps and other information from them, and organise/update the files correspondingly.
 
