@@ -6,6 +6,8 @@
 
 import piexif
 import os
+import sys
+import tables.scripts.ptrepack as ptrepack
 import hashlib
 from tqdm import tqdm
 
@@ -27,6 +29,8 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
+
+import tempfile
 
 import argparse
 
@@ -366,6 +370,7 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
 
 
 if __name__ == "__main__":
+  # working_info adds information about the data extraction process (as the files were last accessed in that context)
   working_info = { 'wd': [os.getcwd()],
                    'hostname': [os.uname()[1]] }
   parser = argparse.ArgumentParser(description="Photon")
@@ -383,12 +388,16 @@ if __name__ == "__main__":
             default=0)
   parser.add_argument('-f', '--force',
             help='force reprocessing of all entries of a datafile',
-            action='store_true',
-            default=False)
+            action='store_true')
+  parser.add_argument('-r', '--repack_off',
+            help='disable repack output datafile after processing',
+            action='store_false',
+            dest='repack')
   parser.add_argument('-s', '--space',
             nargs='+',
             help='files, folders or pattern space to explore',
             dest='space')
+
   args = parser.parse_args()
 
   data = None
@@ -445,30 +454,39 @@ if __name__ == "__main__":
       computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
       divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
 
-      ph_ok = pd.DataFrame()
-      ph_error = pd.DataFrame()
+      ph_ok_orig = pd.DataFrame()
+      ph_error_orig = pd.DataFrame()
+      ph_working_info = pd.DataFrame()
       for datafile in args.datafiles:
         store = pd.HDFStore("{}.pho".format(datafile))
         if '/info' in store:
           store.close()
-          ph_working_info = pd.read_hdf("{}.pho".format(datafile), key='info').iloc[0]
-          if ph_working_info['hostname'] != working_info['hostname'][0]:
+          last_working_info = pd.read_hdf("{}.pho".format(datafile), key='info').iloc[0]
+          if last_working_info['hostname'] != working_info['hostname'][0]:
             print("Data file was generated at {}, but analysis is running on {}".format(
-                ph_working_info['hostname'], working_info['hostname'][0]
+                last_working_info['hostname'], working_info['hostname'][0]
               ))
+          ph_working_info = pd.concat([ph_working_info, last_working_info])
           print(ph_working_info)
         else:
           store.close()
-          print("{}Datafile '{}{}{}' doesn't contain 'info'{}: be extra vigilant\n".format(Fore.RED, Fore.GREEN, "{}.pho".format(datafile), Fore.RED, Fore.RESET))
+          print("{}Datafile '{}{}{}' doesn't contain 'info':{} be extra vigilant\n".format(Fore.RED, Fore.GREEN, datafile, Fore.RED, Fore.RESET))
 
-        ph_ok = pd.concat([ph_ok, pd.read_hdf("{}.pho".format(datafile), key='ok')])
-        ph_error = pd.concat([ph_error, pd.read_hdf("{}.pho".format(datafile), key='error')])
+        ph_ok_orig = pd.concat([ph_ok_orig, pd.read_hdf("{}.pho".format(datafile), key='ok')])
+        ph_error_orig = pd.concat([ph_error_orig, pd.read_hdf("{}.pho".format(datafile), key='error')])
 
       if not args.force:
-        if 'should_remove' in ph_ok.columns:
-          ph_ok = ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE]
-        if 'should_remove' in ph_error.columns:
-          ph_error = ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE]
+        if 'should_remove' in ph_ok_orig.columns:
+          ph_ok = ph_ok_orig.loc[ph_ok_orig[ph_ok_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
+        else:
+         ph_ok = ph_ok_orig
+        if 'should_remove' in ph_error_orig.columns:
+          ph_error = ph_error_orig.loc[ph_error_orig[ph_error_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
+        else:
+          ph_error = ph_error_orig
+      else:
+        ph_ok = ph_ok_orig
+        ph_error = ph_error_orig
 
       num_ok = len(ph_ok)
       num_error = len(ph_error)
@@ -582,12 +600,30 @@ if __name__ == "__main__":
           report_dupes(photos_df, dup_digest, sum(dup_digest_except_first))
           produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
 
-        if args.output is not None:
-          if len(args.output) > 0:
-            print("use '{}'".format(args.output))
-          elif len(args.datafiles) == 1:
-             print("use '{}'".format(args.datafiles[0]))
+      # ALL sets processed
+      if args.output is not None:
+        if len(args.output) > 0:
+          print("use '{}'".format(args.output))
+          datafilename = "{}.pho".format(args.output)
+        elif len(args.datafiles) == 1:
+          print("use '{}'".format(args.datafiles[0]))
+          datafilename = "{}.pho".format(args.datafiles[0])
+        else:
+          print("There are several input datafiles and no single output")
+          sys.exit(2)
 
-          datafilename = "{}_new.pho".format('back')
-          ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
-          ph_error.to_hdf(datafilename, key='error', format="table")
+        ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
+        ph_error.to_hdf(datafilename, key='error', format="table")
+        if ph_working_info:
+          # This only make sense when ONE (1) datafile is used as input. If combining, ....
+          pd.DataFrame(ph_working_info).to_hdf(datafilename, key='info', format="table")
+
+        if args.repack:
+          with tempfile.TemporaryDirectory() as tempdir:
+            #tempdir = tempfile.mkdtemp()
+            #print(tempdir)
+            sys.argv = ['ptrepack', datafilename, os.path.join(tempdir,'repackedfile')]
+            ptrepack.main()
+            os.rename(datafilename, "{}_back".format(datafilename))
+            os.rename(os.path.join(tempdir,'repackedfile'), datafilename)
+
