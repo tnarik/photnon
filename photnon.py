@@ -373,6 +373,10 @@ if __name__ == "__main__":
             nargs='+',
             help='data files. if -s is used, only the first datafile will be taken into account',
             dest='datafiles')
+  parser.add_argument('-o', '--output',
+            nargs='?',
+            const='',
+            help='generate output datafile. if no file is indicated, the input one will overwriten (if there is just one)')
   parser.add_argument('-v', '--verbose',
             help='verbose output',
             action='count',
@@ -386,7 +390,7 @@ if __name__ == "__main__":
             help='files, folders or pattern space to explore',
             dest='space')
   args = parser.parse_args()
-  
+
   data = None
   if args.datafiles:
     print("datafiles '{}{}{}' have been specified\n".format(Fore.GREEN, ' / '.join(args.datafiles), Fore.RESET))
@@ -483,20 +487,24 @@ if __name__ == "__main__":
       print("{}% matching dates{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
                 (ph_ok.mtime_date == ph_ok.datetime_date).value_counts(normalize=True)[True]))
 
-
-      print("{}% timeless{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
-                (ph_ok.timeless).value_counts(normalize=True)[True]))
-
       print("{0}% with discrepancy{1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
                 sum(ph_ok.second_discrepancy <= 60)/len(ph_ok),
                 sum(ph_ok.second_discrepancy <= 3600)/len(ph_ok),
                 sum(ph_ok.second_discrepancy <= 24*3600)/len(ph_ok)))
 
+      print("{}% timeless{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+                len(ph_ok[ph_ok.timeless])/len(ph_ok)))
+      if len(ph_ok[ph_ok.timeless]) > 0:
+        print("{0}% with discrepancy (timeless) {1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
+                  sum(ph_ok[ph_ok.timeless].second_discrepancy <= 60)/len(ph_ok[ph_ok.timeless]),
+                  sum(ph_ok[ph_ok.timeless].second_discrepancy <= 3600)/len(ph_ok[ph_ok.timeless]),
+                  sum(ph_ok[ph_ok.timeless].second_discrepancy <= 24*3600)/len(ph_ok[ph_ok.timeless])))
+
       for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
         print("{}================================ {} set".format(Fore.YELLOW, label))
         # All duplicates
-        dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(divergent_columns))
-        dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(divergent_columns))
+        dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
+        dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
         # Not used, but I was logging that before
         dup_full_reduced = dup_full ^ dup_full_except_first
 
@@ -574,6 +582,12 @@ if __name__ == "__main__":
           report_dupes(photos_df, dup_digest, sum(dup_digest_except_first))
           produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
 
-        datafilename = "{}_new.pho".format('back')
-        ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
-        ph_error.to_hdf(datafilename, key='error', format="table")
+        if args.output is not None:
+          if len(args.output) > 0:
+            print("use '{}'".format(args.output))
+          elif len(args.datafiles) == 1:
+             print("use '{}'".format(args.datafiles[0]))
+
+          datafilename = "{}_new.pho".format('back')
+          ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
+          ph_error.to_hdf(datafilename, key='error', format="table")
