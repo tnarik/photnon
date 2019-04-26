@@ -37,6 +37,9 @@ import argparse
 from colorama import init, Fore
 init(autoreset=True)
 
+EXIT_CODE_WORKINGINFO_MISMATCH = 100
+EXIT_CODE_NO_SINGLE_OUTPUT = 101
+
 CODE_OK = 0
 CODE_ERROR = 1
 CODE_INVALIDIMAGEDATA = 2
@@ -231,14 +234,14 @@ def all_folders(folders, result = set()):
   return result
 
 def report_dupes(photos_df, dup_indexes, goal = None):
-  print("{}Remove report:{}".format(Fore.GREEN,Fore.RESET))
-  print("schedule removal: listed {} / total: {}".format(
-          sum(photos_df[dup_indexes].should_remove == REMOVAL_CODE_SCHEDULE),
-          sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE)
-        ))
+  if args.verbose >= 1: print("{}Remove report:{}".format(Fore.GREEN,Fore.RESET))
+  if args.verbose >= 1: print("schedule removal: listed {} / total: {}".format(
+                          sum(photos_df[dup_indexes].should_remove == REMOVAL_CODE_SCHEDULE),
+                          sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE)
+                        ))
   if goal:
     if goal == sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE):
-      print("  {} - REMOVAL GOAL ACHIEVED{}".format(Fore.GREEN,Fore.RESET))
+      print("  {} - REMOVAL GOAL ACHIEVED:{} {}".format(Fore.GREEN,Fore.RESET, goal))
     else:
       print("  {} - REMOVAL GOAL NOT YET ACHIEVED {} ({} instead of {})".format(Fore.YELLOW,Fore.RESET, sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE), goal))
 
@@ -251,22 +254,22 @@ def generate_dupes_info(photos_df, dup_indexes):
     if len(photos_df[dup_indexes]) == 0:
       return
 
-    print("{}Remove pre-report{}".format(Fore.GREEN,Fore.RESET))
+    if args.verbose >= 1: print("{}Remove pre-report{}".format(Fore.GREEN,Fore.RESET))
     # All that shouldn't be removed yet (and therefore susceptible of analysis)
     photos_df_dups = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes].should_remove != REMOVAL_CODE_SCHEDULE]
     list_digest = photos_df_dups.digest.value_counts()
-    print("entries in process: {} / possible removal: {}".format(
-        len(photos_df_dups),
-        len(photos_df_dups) - len(list_digest)
-      ))
+    if args.verbose >= 1: print("entries in process: {} / possible removal: {}".format(
+                            len(photos_df_dups),
+                            len(photos_df_dups) - len(list_digest)
+                          ))
     # Which from the intended set can we really check now?
     # Let's reduce the intended set based on duplicates ocurring within it
     list_digest_dup = list_digest[list_digest > 1].index.values
     photos_df_dups = photos_df_dups[photos_df_dups.digest.isin(list_digest_dup)]
-    print("filtered entries in process: {} / possible removal: {}".format(
-        len(photos_df_dups),
-        len(photos_df_dups) - len(list_digest_dup)
-      ))
+    if args.verbose >= 1: print("filtered entries in process: {} / possible removal: {}".format(
+                            len(photos_df_dups),
+                            len(photos_df_dups) - len(list_digest_dup)
+                          ))
 
     ''' to speed up testing '''
     preferred_folder = '../flickr_backup/_whole'
@@ -457,6 +460,7 @@ if __name__ == "__main__":
       ph_ok_orig = pd.DataFrame()
       ph_error_orig = pd.DataFrame()
       ph_working_info = pd.DataFrame()
+      working_info_missing = False
       for datafile in args.datafiles:
         store = pd.HDFStore("{}.pho".format(datafile))
         if '/info' in store:
@@ -474,6 +478,15 @@ if __name__ == "__main__":
 
         ph_ok_orig = pd.concat([ph_ok_orig, pd.read_hdf("{}.pho".format(datafile), key='ok')])
         ph_error_orig = pd.concat([ph_error_orig, pd.read_hdf("{}.pho".format(datafile), key='error')])
+
+      if len(ph_working_info) < len(args.datafiles) or ph_working_info.hostname.nunique() > 1:
+        print("{}Datafiles generated on different (or unknown) systems".format(Fore.RED, Fore.RESET))
+        print("{}Final scripts would run on a single machine, which could cause problems in some scenarios (see README.md).{}".format(Fore.YELLOW, Fore.RESET))
+        if not confirm(
+              suffix="(y/N)",
+              message="Do you want to proceed?"):
+          sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
+
 
       if not args.force:
         if 'should_remove' in ph_ok_orig.columns:
@@ -610,7 +623,7 @@ if __name__ == "__main__":
           datafilename = "{}.pho".format(args.datafiles[0])
         else:
           print("There are several input datafiles and no single output")
-          sys.exit(2)
+          sys.exit(EXIT_CODE_NO_SINGLE_OUTPUT)
 
         ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
         ph_error.to_hdf(datafilename, key='error', format="table")
