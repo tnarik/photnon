@@ -34,7 +34,7 @@ import tempfile
 
 import argparse
 
-from process.data_extraction import extract_data
+from photnon.data_extraction import extract_data
 
 from colorama import init, Fore
 init(autoreset=True)

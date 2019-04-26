@@ -1,6 +1,5 @@
 import setuptools
 
-
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
@@ -12,14 +11,15 @@ setuptools.setup(
     description="A small test package",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/test/test",
+    url="https://github.com/tnarik/photnon",
     scripts=["bin/photnon"],
     entry_points={
     	'console_scripts': [
         	'samplea=sample:main',
     	],
 	},
-    packages=setuptools.find_packages(),
+	package_dir={'': 'src'},
+    packages=setuptools.find_namespace_packages(where='src'),
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
