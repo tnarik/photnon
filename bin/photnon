@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from photnon.data_extraction import extract_data
-from photnon.data_analysis import bsize_value, report_dupes, generate_dupes_info, produce_dupes_script, REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, read_datafiles
+from photnon.data_analysis import bsize_value, report_dupes, generate_dupes_info, produce_dupes_script, REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP, read_datafiles
 
 import os
 import sys
@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
   data = None
   if args.datafiles:
-    print("datafiles '{}{}{}' have been specified\n".format(Fore.GREEN, ' / '.join(args.datafiles), Fore.RESET))
+    print("specified datafile{} '{}{}{}'\n".format("s" if len(args.datafiles)>1 else "", Fore.GREEN, ' / '.join(args.datafiles), Fore.RESET))
   else:
     print('NO datafiles specified')
 
@@ -209,7 +209,7 @@ if __name__ == "__main__":
   
           # Keep everything by default
           photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
-          photos_df.loc[:, 'persist_version'] = -1
+          photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
   
           print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
           generate_dupes_info(photos_df, dup_full, verbose = args.verbose)

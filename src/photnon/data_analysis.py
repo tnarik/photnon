@@ -1,6 +1,8 @@
 import os
 
 import pandas as pd
+from tqdm import tqdm
+tqdm.pandas()
 
 from colorama import init, Fore
 init(autoreset=True)
@@ -14,6 +16,10 @@ REMOVAL_CODE_LEGEND = { REMOVAL_CODE_IGNORE: "Ignore",
                         REMOVAL_CODE_POSIBLE: "Considered",
                         REMOVAL_CODE_SCHEDULE: "Scheduled",
                         REMOVAL_CODE_KEEP: "Kept"}
+
+PERSIST_VERSION_KEEP = -1
+
+LOG_PROGRESS_THRESHOLD = 2000
 
 def bsize_value(value):
   unit_divisor=1000
@@ -95,10 +101,11 @@ def select_best_alternative(alternatives, msg):
 
 def decide_removal_action(x, photos_df, persist_candidates, decide_removal_entries):
   master_candidates = photos_df.loc[persist_candidates][photos_df.loc[persist_candidates].digest==x.digest]
+  #return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
   if len(master_candidates) == 1:
     # Single master candidate (we want to keep the entry if that's the master) 
     if master_candidates.index == x.name:
-      return {'persist_version': -1, 'should_remove': REMOVAL_CODE_KEEP}
+      return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove': REMOVAL_CODE_KEEP}
     else:
       return {'persist_version':master_candidates.index[0] , 'should_remove':REMOVAL_CODE_SCHEDULE}
   elif len(master_candidates) > 1:
@@ -109,7 +116,7 @@ def decide_removal_action(x, photos_df, persist_candidates, decide_removal_entri
       return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
     else:
       # Either there is no alternative or right now there is only one: this entry
-      return {'persist_version': -1, 'should_remove':REMOVAL_CODE_POSIBLE}
+      return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
   else:
     # No master candidates, let the algorithm decide
     best_alternative = select_best_alternative(decide_removal_entries[decide_removal_entries.digest==x.digest], 'digests')
@@ -117,7 +124,7 @@ def decide_removal_action(x, photos_df, persist_candidates, decide_removal_entri
       return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
     else:
       # Either there is no alternative or right now there is only one: this entry
-      return {'persist_version': -1, 'should_remove':REMOVAL_CODE_POSIBLE}
+      return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
 def generate_dupes_info(photos_df, dup_indexes, verbose=0):
   if len(photos_df[dup_indexes]) == 0:
@@ -163,14 +170,30 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
 
   decide_removal_entries = photos_df.loc[photos_df_dups.index]
 
-  photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal_entries.apply(
-        lambda x: decide_removal_action(x, photos_df, persist_candidates, decide_removal_entries),
-        axis=1, result_type='expand')
+  if len(decide_removal_entries) > LOG_PROGRESS_THRESHOLD:
+    decide_removal = decide_removal_entries.progress_apply
+  else:
+    decide_removal = decide_removal_entries.apply
 
+ # pp = photos_df.loc[persist_candidates]
+  photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal(
+          lambda x: decide_removal_action(x, photos_df, persist_candidates, decide_removal_entries),
+          axis=1, result_type='expand')
+
+  # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
+  all_replaceable = photos_df[photos_df.persist_version != PERSIST_VERSION_KEEP]
+  all_persisted_version_kept = all(photos_df.loc[all_replaceable.persist_version].persist_version == PERSIST_VERSION_KEEP)
+  if not all_persisted_version_kept:
+    raise Exception("Some file intented as a master is also to be removed!")
 
       
 def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
   str = ""
+  '''
+  if [[ $(hostname) != 'Wintermute-Manoeuvre.local' ]]; then
+    echo 'SCRIPT run on a different machine, confirm to proceed';
+  fi
+  '''
   for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].sort_values('digest').iterrows():
     try:
       keeper = photos_df.loc[int(p.persist_version)]
@@ -178,6 +201,9 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
       #print(p)
       keeper = {'folder':'', 'name':''}
     
+    if os.path.join(keeper['folder'], keeper['name']) == os.path.join(p['folder'], p['name']):
+      print("{}Why would we want to diff a file with itself?{}: {}".format(Fore.RED, Fore.RESET, os.path.join(p['folder'], p['name'])))
+
     str += "diff \"{}\" \"{}\"".format(os.path.join(keeper['folder'], keeper['name']), os.path.join(p['folder'], p['name']))
     str += " && echo \'rm \"{}\"\'\n".format(os.path.join(p['folder'], p['name']))
   with open(dupes_script, 'w') as f:
@@ -212,6 +238,17 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
       ph_ok['folder'] = ph_ok.folder.apply(lambda x: os.path.realpath(os.path.join(wd, x)))
       ph_error['folder'] = ph_error.folder.apply(lambda x: os.path.realpath(os.path.join(wd, x)))
 
+  # Because persist_version references indexes...
+  ph_ok.reset_index(inplace=True)
+  if 'persist_version' in ph_ok.columns:
+    map_reindex = {v:k for k,v in ph_ok['index'].to_dict().items()}
+    ph_ok['persist_version'] = ph_ok['persist_version'].transfom(lambda x: map_reindex[x])
+    ph_ok.drop('index')
+  ph_error.reset_index(inplace=True)
+  if 'persist_version' in ph_error.columns:
+    map_reindex = {v:k for k,v in ph_error['index'].to_dict().items()}
+    ph_error['persist_version'] = ph_error['persist_version'].transfom(lambda x: map_reindex[x])
+    ph_error.drop('index')
 
   num_read_ok = len(ph_ok)
   num_read_error = len(ph_error)
