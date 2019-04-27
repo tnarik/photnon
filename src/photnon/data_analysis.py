@@ -53,9 +53,9 @@ def report_dupes(photos_df, dup_indexes, goal = None, verbose=0):
                         ))
   if goal:
     if goal == sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE):
-      print("  {} - REMOVAL GOAL ACHIEVED:{} {}".format(Fore.GREEN,Fore.RESET, goal))
+      print("      {}REMOVAL GOAL ACHIEVED:{} {}".format(Fore.GREEN,Fore.RESET, goal))
     else:
-      print("  {} - REMOVAL GOAL NOT YET ACHIEVED {} ({} instead of {})".format(Fore.YELLOW,Fore.RESET, sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE), goal))
+      print("      {}REMOVAL GOAL NOT YET ACHIEVED {} ({} instead of {})".format(Fore.YELLOW,Fore.RESET, sum(photos_df.should_remove == REMOVAL_CODE_SCHEDULE), goal))
 
   #print("{}Remove report (duplicated entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
   #            (photos_df[dup_indexes].should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
@@ -104,6 +104,7 @@ def decide_removal_action(x, photos_df, persist_candidates, decide_removal_entri
   elif len(master_candidates) > 1:
     # Several master candidates
     best_alternative = select_best_alternative(master_candidates, 'preferred')
+    #print("best -----",master_candidates, '-----',best_alternative)
     if (best_alternative is not None) and (best_alternative.name != x.name):
       return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
     else:
@@ -162,7 +163,6 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
 
   decide_removal_entries = photos_df.loc[photos_df_dups.index]
 
-
   photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal_entries.apply(
         lambda x: decide_removal_action(x, photos_df, persist_candidates, decide_removal_entries),
         axis=1, result_type='expand')
@@ -183,7 +183,7 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
   with open(dupes_script, 'w') as f:
       f.write(str)
 
-def read_datafiles(running_working_info, datafiles):
+def read_datafiles(running_working_info, datafiles, deduplicate=True):
   ph_working_info = pd.DataFrame()
   ph_ok = pd.DataFrame()
   ph_error = pd.DataFrame()
@@ -205,5 +205,11 @@ def read_datafiles(running_working_info, datafiles):
   
     ph_ok = pd.concat([ph_ok, pd.read_hdf("{}.pho".format(datafile), key='ok')])
     ph_error = pd.concat([ph_error, pd.read_hdf("{}.pho".format(datafile), key='error')])
+
+  num_read_ok = len(ph_ok)
+  num_read_error = len(ph_error)
+  if deduplicate:
+    ph_ok = ph_ok.drop_duplicates(keep='first')
+    ph_error = ph_error.drop_duplicates(keep='first')
   
-    return ph_working_info, ph_ok, ph_error
+  return ph_working_info, ph_ok, ph_error, num_read_ok, num_read_error

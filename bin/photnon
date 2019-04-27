@@ -76,15 +76,24 @@ if __name__ == "__main__":
       computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
       divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
 
-      ph_working_info, ph_ok_orig, ph_error_orig = read_datafiles(working_info, args.datafiles)
+      deduplicate = True
+      ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate)
 
       if len(ph_working_info) < len(args.datafiles) or ph_working_info.hostname.nunique() > 1:
+        print(ph_working_info)
         print("{}Datafiles generated on different (or unknown) systems".format(Fore.RED, Fore.RESET))
         print("{}Final scripts would run on a single machine, which could cause problems in some scenarios (see README.md).{}".format(Fore.YELLOW, Fore.RESET))
         if not confirm(
               suffix="(y/N)",
               message="Do you want to proceed?"):
           sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
+
+      print("total        : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
+      if deduplicate:
+        num_ok = len(ph_ok_orig)
+        num_error = len(ph_error_orig)
+        num_total = num_ok + num_error
+        print("deduplicated : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
 
       ph_ok = ph_ok_orig
       ph_error = ph_error_orig
@@ -97,7 +106,7 @@ if __name__ == "__main__":
       num_ok = len(ph_ok)
       num_error = len(ph_error)
       num_total = num_ok + num_error
-      print("total: {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
+      print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
       print("{}================================".format(Fore.YELLOW))
       print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
 
