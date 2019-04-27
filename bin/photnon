@@ -88,6 +88,11 @@ if __name__ == "__main__":
               message="Do you want to proceed?"):
           sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
 
+      # After reading the datafiles, the working information is sanitised and refreshed
+      ph_working_info = pd.DataFrame( { 'wd': ['/'],
+                                        'hostname': [os.uname()[1]] }
+                                    )
+
       print("total        : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
       if deduplicate:
         num_ok = len(ph_ok_orig)
