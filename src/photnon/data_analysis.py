@@ -189,6 +189,7 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   ph_error = pd.DataFrame()
 
   for datafile in datafiles:
+    last_working_info = None
     store = pd.HDFStore("{}.pho".format(datafile))
     if '/info' in store:
       store.close()
@@ -205,6 +206,12 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   
     ph_ok = pd.concat([ph_ok, pd.read_hdf("{}.pho".format(datafile), key='ok')])
     ph_error = pd.concat([ph_error, pd.read_hdf("{}.pho".format(datafile), key='error')])
+    if last_working_info is not None:
+      # Sanitize folders
+      wd = last_working_info.loc[0, 'wd']
+      ph_ok['folder'] = ph_ok.folder.apply(lambda x: os.path.realpath(os.path.join(wd, x)))
+      ph_error['folder'] = ph_error.folder.apply(lambda x: os.path.realpath(os.path.join(wd, x)))
+
 
   num_read_ok = len(ph_ok)
   num_read_error = len(ph_error)
