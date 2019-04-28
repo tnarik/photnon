@@ -37,20 +37,6 @@ def bsize_value(value):
     level +=1
   return(value, units[level])
 
-def all_folders(folders, result = set()):
-  if isinstance(folders, np.ndarray):
-    folders = folders.tolist()
-  if not isinstance(folders, list):
-    folders = [folders]
-      
-  for folder in folders:
-    result.add(folder)
-    head, tail = os.path.split(folder)
-    if head and tail:
-      all_folders(head, result)
-  return result
-
-
 def report_dupes(photos_df, dup_indexes, goal = None, verbose=0):
   if verbose >= 1: print("{}Remove report:{}".format(Fore.GREEN,Fore.RESET))
   if verbose >= 1: print("schedule removal: listed {} / total: {}".format(
@@ -162,18 +148,6 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
 
   ''' to speed up testing '''
   preferred_folder = '../flickr_backup/_whole'
-
-  '''
-      folders = sorted(all_folders(photos_df_dups.folder.unique()))
-      folder_completer = WordCompleter(folders)
-  
-      validator = Validator.from_callable(
-        lambda x: x in folders,
-        error_message='not a valid folder',
-        move_cursor_to_end=True)
-      preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
-        validator=validator)
-  '''  
 
   # Preserve 'preferred folder'. This doesn't work when duplicates are on the same one
   persist_candidates_list = photos_df_dups['folder'].str.match(preferred_folder)

@@ -29,6 +29,34 @@ init(autoreset=True)
 EXIT_CODE_WORKINGINFO_MISMATCH = 100
 EXIT_CODE_NO_SINGLE_OUTPUT = 101
 
+def all_folders(folders, result = set()):
+  if isinstance(folders, np.ndarray):
+    folders = folders.tolist()
+  if not isinstance(folders, list):
+    folders = [folders]
+
+  for folder in folders:
+    result.add(folder)
+    head, tail = os.path.split(folder)
+    if head and tail:
+      all_folders(head, result)
+  return result
+
+def preferred_folder(full_folders):
+  folders = sorted(all_folders(full_folders))
+  print("\n".join(folders[0:10]))
+  return
+  folder_completer = WordCompleter(folders)
+
+  validator = Validator.from_callable(
+    lambda x: x in folders,
+    error_message='not a valid folder',
+    move_cursor_to_end=True)
+  preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
+    validator=validator)
+  print(preferred_folder)
+
+
 if __name__ == "__main__":
   # working_info adds information about the data extraction process (as the files were last accessed in that context)
   working_info = { 'wd': [os.getcwd()],
@@ -58,7 +86,17 @@ if __name__ == "__main__":
             help='files, folders or pattern space to explore',
             dest='space')
 
+  # test
+  parser.add_argument('-t',
+    dest='preffold_test',
+    action='store_true')
+
   args = parser.parse_args()
+
+  if args.preffold_test:
+    folds = np.load("folds.npy")
+    preferred_folder(folds)
+    exit(2)
 
   data = None
   if args.datafiles:
@@ -76,8 +114,7 @@ if __name__ == "__main__":
       computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
       divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
 
-      deduplicate = True
-      ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate)
+      ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
 
       if len(ph_working_info) < len(args.datafiles) or ph_working_info.hostname.nunique() > 1:
         print(ph_working_info)
@@ -88,17 +125,8 @@ if __name__ == "__main__":
               message="Do you want to proceed?"):
           sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
 
-      # After reading the datafiles, the working information is sanitised and refreshed
-      ph_working_info = pd.DataFrame( { 'wd': ['/'],
-                                        'hostname': [os.uname()[1]] }
-                                    )
-
       print("total        : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
-      if deduplicate:
-        num_ok = len(ph_ok_orig)
-        num_error = len(ph_error_orig)
-        num_total = num_ok + num_error
-        print("deduplicated : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
+      print("deduplicated : {} (ok: {}/ error: {})".format(len(ph_ok_orig) + len(ph_error_orig), len(ph_ok_orig), len(ph_error_orig)))
 
       ph_ok = ph_ok_orig
       ph_error = ph_error_orig
@@ -211,6 +239,8 @@ if __name__ == "__main__":
           photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
           photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
   
+          #preferred_folder(photos_df.loc[dup_full].folder.unique())
+
           print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
           generate_dupes_info(photos_df, dup_full, verbose = args.verbose)
           report_dupes(photos_df, dup_full, sum(dup_digest_except_first), verbose = args.verbose)
@@ -234,14 +264,13 @@ if __name__ == "__main__":
 
         ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
         ph_error.to_hdf(datafilename, key='error', format="table")
-        if len(ph_working_info) > 0:
-          # This only make sense when ONE (1) datafile is used as input. If combining, ....
-          pd.DataFrame(ph_working_info).to_hdf(datafilename, key='info', format="table")
+        # After reading the datafiles, the working information needs to be sanitised and refreshed
+        pd.DataFrame( { 'wd': ['.'],
+                        'hostname': [os.uname()[1]] }
+                    ).to_hdf(datafilename, key='info', format="table")
 
         if args.repack:
           with tempfile.TemporaryDirectory() as tempdir:
-            #tempdir = tempfile.mkdtemp()
-            #print(tempdir)
             sys.argv = ['ptrepack', datafilename, os.path.join(tempdir,'repackedfile')]
             ptrepack.main()
             if False:
