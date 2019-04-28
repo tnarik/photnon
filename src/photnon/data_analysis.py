@@ -81,50 +81,63 @@ def select_best_alternative(alternatives, msg):
   if len(alternatives) == 1:
     return alternatives.iloc[0]
 
+  num_name = alternatives['name'].nunique()
+  num_mtime = alternatives['mtime'].nunique()
+  num_datetime = alternatives['datetime'].nunique()
   # All alternatives are equivalent
-  if (alternatives['name'].nunique() == 1) and (alternatives['mtime'].nunique() == 1) and (alternatives['datetime'].nunique() == 1):
+  if (num_name == 1) and (num_mtime == 1) and (num_datetime == 1):
     # If names, mtime and datetime_date are the same, choose at random (the first one, for instance)
     #print(alternatives['name'].unique()[0])
     return alternatives.iloc[0]
-  
-  if (alternatives['mtime'].nunique() == 1) and (alternatives['datetime'].nunique() == 1):
+
+  if (num_mtime == 1) and (num_datetime == 1):
     return alternatives.loc[alternatives['name'].str.split('.', expand=True)[0].sort_values().index[0]]
-  elif (alternatives['datetime'].nunique() == 1):
+
+  if (num_datetime == 1):
     # Internal time is the same
     return alternatives.loc[alternatives['name'].str.split('.', expand=True)[0].sort_values().index[0]]
-  elif (alternatives['digest'].nunique() == 1):
+
+  num_digest = alternatives['digest'].nunique()
+  if (num_digest == 1):
     return alternatives.sort_values('mtime').iloc[0]
 
-  # Really, at least the datetime should be equivalent
+  # Really, at least the datetime or the digest should be equivalent
   return None
 
 
-def decide_removal_action(x, photos_df, persist_candidates, decide_removal_entries):
-  master_candidates = photos_df.loc[persist_candidates][photos_df.loc[persist_candidates].digest==x.digest]
+def decide_removal_action(x, persist_candidates, decide_removal_entries):
+#def decide_removal_action(x, decide_removal_entries):
+  #master_candidates = persist_candidates[persist_candidates.digest==x.digest]
+  if x.digest in persist_candidates.index:
+    master_candidates = persist_candidates.loc[x.digest]
+    if len(master_candidates) == 1:
+      # Single master candidate (we want to keep the entry if that's the master)
+      if master_candidates['index'] != x.name:
+        return {'persist_version':master_candidates.iloc[0, 'index'] , 'should_remove':REMOVAL_CODE_SCHEDULE}
+      else:
+        return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove': REMOVAL_CODE_KEEP}
+
+    if len(master_candidates) > 1:
+      # Several master candidates
+      best_alternative = select_best_alternative(master_candidates.set_index('index'), 'preferred')
+      #print("best -----",master_candidates, '-----',best_alternative)
+      if (best_alternative is not None) and (best_alternative.name != x.name):
+        return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
+      else:
+        # Either there is no alternative or right now there is only one: this entry
+        return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
+
+  # No master candidates, let the algorithm decide
   #return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
-  if len(master_candidates) == 1:
-    # Single master candidate (we want to keep the entry if that's the master) 
-    if master_candidates.index == x.name:
-      return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove': REMOVAL_CODE_KEEP}
-    else:
-      return {'persist_version':master_candidates.index[0] , 'should_remove':REMOVAL_CODE_SCHEDULE}
-  elif len(master_candidates) > 1:
-    # Several master candidates
-    best_alternative = select_best_alternative(master_candidates, 'preferred')
-    #print("best -----",master_candidates, '-----',best_alternative)
-    if (best_alternative is not None) and (best_alternative.name != x.name):
-      return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
-    else:
-      # Either there is no alternative or right now there is only one: this entry
-      return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
+  best_alternative = select_best_alternative(decide_removal_entries, 'digests')
+  #return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
+  if (best_alternative is not None) and (best_alternative.name != x.name):
+    #if best_alternative.name == 86127 or best_alternative.name == 5410 or best_alternative.name == 86795:
+    #  print("digest alternative for ", x, best_alternative)
+    return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
   else:
-    # No master candidates, let the algorithm decide
-    best_alternative = select_best_alternative(decide_removal_entries[decide_removal_entries.digest==x.digest], 'digests')
-    if (best_alternative is not None) and (best_alternative.name != x.name):
-      return {'persist_version': best_alternative.name, 'should_remove':REMOVAL_CODE_SCHEDULE}
-    else:
-      # Either there is no alternative or right now there is only one: this entry
-      return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
+    # Either there is no alternative or right now there is only one: this entry
+    return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
 def generate_dupes_info(photos_df, dup_indexes, verbose=0):
   if len(photos_df[dup_indexes]) == 0:
@@ -164,26 +177,57 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
 
   # Preserve 'preferred folder'. This doesn't work when duplicates are on the same one
   persist_candidates_list = photos_df_dups['folder'].str.match(preferred_folder)
-  persist_candidates = photos_df_dups[persist_candidates_list].index
+  persist_candidates_index = photos_df_dups[persist_candidates_list].index
+  persist_candidates = photos_df.loc[persist_candidates_index]
+  persist_candidates = persist_candidates.reset_index().set_index('digest',drop=False)
 
   photos_df.loc[photos_df_dups.index, 'should_remove'] = REMOVAL_CODE_POSIBLE
 
   decide_removal_entries = photos_df.loc[photos_df_dups.index]
-
   if len(decide_removal_entries) > LOG_PROGRESS_THRESHOLD:
     decide_removal = decide_removal_entries.progress_apply
   else:
     decide_removal = decide_removal_entries.apply
 
- # pp = photos_df.loc[persist_candidates]
+  decide_removal_entries = decide_removal_entries.reset_index().set_index('digest',drop=False)
   photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal(
-          lambda x: decide_removal_action(x, photos_df, persist_candidates, decide_removal_entries),
+          lambda x: decide_removal_action(x, decide_removal_entries.loc[x.digest].set_index('index')),
+#          lambda x: decide_removal_action(x, persist_candidates, decide_removal_entries.loc[x.digest].set_index('index')),
           axis=1, result_type='expand')
 
   # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
-  all_replaceable = photos_df[photos_df.persist_version != PERSIST_VERSION_KEEP]
+  all_replaceable = photos_df.loc[photos_df[photos_df.persist_version != PERSIST_VERSION_KEEP].index]
+  #print(all_replaceable.index)
+  #print("===")
+  #print(photos_df.index)
+  #print("===")
+  #print(photos_df.persist_version)
+  #print("===")
+  #print(all_replaceable.persist_version)
+  #print("===")
+
+  # This block guarantees that all refered masters (persist_version) are kept.
+  # It does this by reassigning the underlying master
+  # The scenario is when there are two sets of name duplicates which ALSO match digests
+  # By the time digests are processed, there would be to-be-removed entries used as reference for already-pending-removal entries
+  if any(all_replaceable.persist_version.isin(all_replaceable.index)):
+    print("{}some master is also replaceable, should fix this".format(Fore.RED))
+    new_persist_version = all_replaceable[all_replaceable.persist_version.isin(all_replaceable.index)].apply(
+      lambda x: all_replaceable.loc[x.persist_version].persist_version,
+#      lambda x: print(x.name, x.persist_version, all_replaceable.loc[x.persist_version]),
+      axis=1 )
+    all_replaceable.loc[a.index, 'persist_version'] = new_persist_version.values
+    #print(all_replaceable.persist_version)
+#  print("++++")
+
   all_persisted_version_kept = all(photos_df.loc[all_replaceable.persist_version].persist_version == PERSIST_VERSION_KEEP)
   if not all_persisted_version_kept:
+    #print(photos_df.loc[all_replaceable.persist_version].persist_version.unique())
+    #print(photos_df.loc[photos_df.loc[all_replaceable.persist_version].persist_version.unique()[1]])
+    #print("------")
+    #print(photos_df[photos_df.persist_version == 86127])
+    #print("------")
+    #print(photos_df[photos_df.persist_version == 5410])
     raise Exception("Some file intented as a master is also to be removed!")
 
       
@@ -243,12 +287,12 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   if 'persist_version' in ph_ok.columns:
     map_reindex = {v:k for k,v in ph_ok['index'].to_dict().items()}
     ph_ok['persist_version'] = ph_ok['persist_version'].transfom(lambda x: map_reindex[x])
-    ph_ok.drop('index')
+  ph_ok.drop('index', axis=1, inplace=True)
   ph_error.reset_index(inplace=True)
   if 'persist_version' in ph_error.columns:
     map_reindex = {v:k for k,v in ph_error['index'].to_dict().items()}
     ph_error['persist_version'] = ph_error['persist_version'].transfom(lambda x: map_reindex[x])
-    ph_error.drop('index')
+  ph_error.drop('index', axis=1, inplace=True)
 
   num_read_ok = len(ph_ok)
   num_read_error = len(ph_error)

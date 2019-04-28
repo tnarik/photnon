@@ -57,17 +57,18 @@ def identify_file(path, name, verbose=0):
   atime = dt.fromtimestamp(stats.st_atime)
   mtime = dt.fromtimestamp(stats.st_mtime)
   ctime = dt.fromtimestamp(stats.st_ctime)
+
+  digester = hashlib.sha1()
+  with open(path, "rb") as f:
+    for chunk in iter(lambda: f.read(CHUNK_SIZE), b''):
+      digester.update(chunk)
+  digest = digester.hexdigest()
+  mime = magic.from_file(path, mime=True)
+
   if stats.st_size == 0:
     code = CODE_SIZE_ZERO
   else:
     try:
-      digester = hashlib.sha1()
-      with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(CHUNK_SIZE), b''):
-          digester.update(chunk)
-      digest = digester.hexdigest()
-      mime = magic.from_file(path, mime=True)
-  
       pic_exif = piexif.load(path)
       if verbose > 4 : print(pic_exif)
       try:
