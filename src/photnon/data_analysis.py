@@ -191,44 +191,27 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
 
   decide_removal_entries = decide_removal_entries.reset_index().set_index('digest',drop=False)
   photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal(
-          lambda x: decide_removal_action(x, decide_removal_entries.loc[x.digest].set_index('index')),
-#          lambda x: decide_removal_action(x, persist_candidates, decide_removal_entries.loc[x.digest].set_index('index')),
+#          lambda x: decide_removal_action(x, decide_removal_entries.loc[x.digest].set_index('index')),
+          lambda x: decide_removal_action(x, persist_candidates, decide_removal_entries.loc[x.digest].set_index('index')),
           axis=1, result_type='expand')
 
   # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
-  all_replaceable = photos_df.loc[photos_df[photos_df.persist_version != PERSIST_VERSION_KEEP].index]
-  #print(all_replaceable.index)
-  #print("===")
-  #print(photos_df.index)
-  #print("===")
-  #print(photos_df.persist_version)
-  #print("===")
-  #print(all_replaceable.persist_version)
-  #print("===")
-
   # This block guarantees that all refered masters (persist_version) are kept.
   # It does this by reassigning the underlying master
   # The scenario is when there are two sets of name duplicates which ALSO match digests
   # By the time digests are processed, there would be to-be-removed entries used as reference for already-pending-removal entries
+  all_replaceable = photos_df.loc[photos_df[photos_df.persist_version != PERSIST_VERSION_KEEP].index]
   if any(all_replaceable.persist_version.isin(all_replaceable.index)):
-    print("{}some master is also replaceable, should fix this".format(Fore.RED))
+    print("{}some master files are also replaceable. fixing".format(Fore.YELLOW))
     new_persist_version = all_replaceable[all_replaceable.persist_version.isin(all_replaceable.index)].apply(
       lambda x: all_replaceable.loc[x.persist_version].persist_version,
 #      lambda x: print(x.name, x.persist_version, all_replaceable.loc[x.persist_version]),
       axis=1 )
-    all_replaceable.loc[a.index, 'persist_version'] = new_persist_version.values
-    #print(all_replaceable.persist_version)
-#  print("++++")
+    all_replaceable.loc[new_persist_version.index, 'persist_version'] = new_persist_version.values
 
   all_persisted_version_kept = all(photos_df.loc[all_replaceable.persist_version].persist_version == PERSIST_VERSION_KEEP)
   if not all_persisted_version_kept:
-    #print(photos_df.loc[all_replaceable.persist_version].persist_version.unique())
-    #print(photos_df.loc[photos_df.loc[all_replaceable.persist_version].persist_version.unique()[1]])
-    #print("------")
-    #print(photos_df[photos_df.persist_version == 86127])
-    #print("------")
-    #print(photos_df[photos_df.persist_version == 5410])
-    raise Exception("Some file intented as a master is also to be removed!")
+    raise Exception("Some file intented as a master are to be removed!")
 
       
 def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
