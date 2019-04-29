@@ -69,9 +69,9 @@ def select_best_alternative(alternatives):
   if len(alternatives) == 1:
     return alternatives.iloc[0]
 
-  num_name = alternatives['name'].nunique()
-  num_mtime = alternatives['mtime'].nunique()
-  num_datetime = alternatives['datetime'].nunique()
+  num_name = alternatives['name'].nunique(dropna=False)
+  num_mtime = alternatives['mtime'].nunique(dropna=False)
+  num_datetime = alternatives['datetime'].nunique(dropna=False)
   # All alternatives are equivalent
   if (num_name == 1) and (num_mtime == 1) and (num_datetime == 1):
     # If names, mtime and datetime_date are the same, choose at random (the first one, for instance)
@@ -84,14 +84,48 @@ def select_best_alternative(alternatives):
     return alternatives.sort_values(by='best_criteria').iloc[0]
 
   if (num_datetime == 1):
-    # Internal time is the same
+    # Internal time is the same (or none)
     alternatives = alternatives.copy()
     alternatives['best_criteria'] = alternatives['name'].str.split('.', expand=True)[0]
     return alternatives.sort_values(by='best_criteria').iloc[0]
 
-  num_digest = alternatives['digest'].nunique()
+  num_digest = alternatives['digest'].nunique(dropna=False)
   if (num_digest == 1):
     return alternatives.sort_values('mtime').iloc[0]
+
+  # Really, at least the datetime or the digest should be equivalent
+  return None
+
+def select_best_alternative_index(alternatives):
+  '''
+  This works like this:
+  1. If a single alternative, choose that: This is the case for name based duplication (preferred folder wins)
+  2. If several are equivalent, choose the first one: they have the same name
+  3. Choose better name when times match (have different clauses depending on which times match, just in case) 
+  4. If the only match is the digest (check it again), then choose the lower 'mtime' (older file)
+  5. No alternative is good
+
+  There are a couple of 'copy' statements. This is to ensure the 'best_criteria' info doesn't pollute the original DFs
+  '''
+  # Single alternative
+  if len(alternatives) == 1:
+    return alternatives.iloc[0]['index']
+
+  num_name = alternatives['name'].nunique(dropna=False)
+  num_mtime = alternatives['mtime'].nunique(dropna=False)
+  # All alternatives are equivalent
+  if (num_name == 1) and (num_mtime == 1):
+    # If names, mtime and datetime_date are the same, choose at random (the first one, for instance)
+    return alternatives.iloc[0]['index']
+
+  if (num_mtime == 1):# and (num_datetime == 1):
+    alternatives = alternatives.copy()
+    alternatives['best_criteria'] = alternatives['name'].str.split('.', expand=True)[0]
+    return alternatives.sort_values(by='best_criteria').iloc[0]['index']
+
+  num_digest = alternatives['digest'].nunique(dropna=False)
+  if (num_digest == 1):
+    return alternatives.sort_values('mtime').iloc[0]['index']
 
   # Really, at least the datetime or the digest should be equivalent
   return None
@@ -113,18 +147,19 @@ def decide_removal_action(x, persist_candidates, decide_removal_entries):
 
     if len(master_candidates) > 1:
       # Several master candidates
-      best_alternative = select_best_alternative(master_candidates)
+      best_alternative = select_best_alternative_index(master_candidates)
       #print("best -----",master_candidates, '-----',best_alternative)
-      if (best_alternative is not None) and (best_alternative['index'] != x.name):
-        return {'persist_version': best_alternative['index'], 'should_remove':REMOVAL_CODE_SCHEDULE}
+      if (best_alternative is not None) and (best_alternative != x.name):
+        return {'persist_version': best_alternative, 'should_remove':REMOVAL_CODE_SCHEDULE}
       else:
         # Either there is no alternative or right now there is only one: this entry
         return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
-  # No master candidates, let the algorithm decide
-  best_alternative = select_best_alternative(decide_removal_entries)
-  if (best_alternative is not None) and (best_alternative['index'] != x.name):
-    return {'persist_version': best_alternative['index'], 'should_remove':REMOVAL_CODE_SCHEDULE}
+  # No master candidates, let the algorithm decide based on all available
+  decide_removal_entries = decide_removal_entries.loc[x.digest]
+  best_alternative = select_best_alternative_index(decide_removal_entries)
+  if (best_alternative is not None) and (best_alternative != x.name):
+    return {'persist_version': best_alternative, 'should_remove':REMOVAL_CODE_SCHEDULE}
   else:
     # Either there is no alternative or right now there is only one: this entry
     return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
@@ -170,7 +205,7 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
   # Sorting the index makes the ,loc somewhat faster (2x-3x)
   decide_removal_entries = decide_removal_entries.reset_index().set_index('digest',drop=False).sort_index()
   photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal(
-          lambda x: decide_removal_action(x, persist_candidates, decide_removal_entries.loc[x.digest]),
+          lambda x: decide_removal_action(x, persist_candidates, decide_removal_entries),
           axis=1, result_type='expand')
 
   # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
