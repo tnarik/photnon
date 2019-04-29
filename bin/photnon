@@ -29,7 +29,7 @@ init(autoreset=True)
 EXIT_CODE_WORKINGINFO_MISMATCH = 100
 EXIT_CODE_NO_SINGLE_OUTPUT = 101
 
-def all_folders(folders, result = set()):
+def all_folders(folders, roots, result = set()):
   if isinstance(folders, np.ndarray):
     folders = folders.tolist()
   if not isinstance(folders, list):
@@ -38,14 +38,15 @@ def all_folders(folders, result = set()):
   for folder in folders:
     result.add(folder)
     head, tail = os.path.split(folder)
+    if head in roots:
+      return result
     if head and tail:
-      all_folders(head, result)
+      all_folders(head, roots, result)
   return result
 
-def preferred_folder(full_folders):
-  folders = sorted(all_folders(full_folders))
+def preferred_folder(full_folders, roots):
+  folders = sorted(all_folders(full_folders, roots))
   print("\n".join(folders[0:10]))
-  return
   folder_completer = WordCompleter(folders)
 
   validator = Validator.from_callable(
@@ -94,8 +95,13 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   if args.preffold_test:
+    ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
+    sorted_folders = ph_ok_orig['folder'].value_counts().index.values
+    print([f.split("/") for f in sorted_folders])
+    exit(2)
+
     folds = np.load("folds.npy")
-    preferred_folder(folds)
+    preferred_folder(folds, ['/Volumes/frø/photo_bank', '/Volumes/frøhvelv/photo_bank'])
     exit(2)
 
   data = None
