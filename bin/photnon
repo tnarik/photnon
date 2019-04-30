@@ -29,24 +29,27 @@ init(autoreset=True)
 EXIT_CODE_WORKINGINFO_MISMATCH = 100
 EXIT_CODE_NO_SINGLE_OUTPUT = 101
 
-def all_folders(folders, roots, result = set()):
-  if isinstance(folders, np.ndarray):
-    folders = folders.tolist()
-  if not isinstance(folders, list):
-    folders = [folders]
+def all_folders_with_counts(folders):
+  folder_counts = folders.value_counts()
+  folder_tokens = [folder_count.split(os.path.sep) for folder_count in folder_counts.index.values]
+  folder_tokens_counts = pd.concat([pd.DataFrame(folder_tokens, index=folder_counts.index), folder_counts.to_frame()], axis=1)
 
-  for folder in folders:
-    result.add(folder)
-    head, tail = os.path.split(folder)
-    if head in roots:
-      return result
-    if head and tail:
-      all_folders(head, roots, result)
-  return result
+  file_counts = pd.Series()
+  last = None
+  for top in range(1, len(folder_tokens_counts.columns)-1):
+    positions = list(folder_tokens_counts.columns[:-top].values)
+    folder_tolens_counts_aggregated = folder_tokens_counts.loc[~folder_tokens_counts[positions[-1]].isna()].fillna('').groupby(positions, axis=0).sum()
 
-def preferred_folder(full_folders, roots):
-  folders = sorted(all_folders(full_folders, roots))
-  print("\n".join(folders[0:10]))
+    if np.array_equal(folder_tolens_counts_aggregated.values, last):
+      break
+    last = folder_tolens_counts_aggregated.values
+    file_counts = file_counts.append(folder_tolens_counts_aggregated['folder'])
+
+  return file_counts.sort_values(ascending=False)
+
+def preferred_folder(full_folders):
+  folders = all_folders_with_counts(full_folders).index.map(lambda ix: os.path.sep.join(ix))
+  # print("\n".join(folders[0:10]))
   folder_completer = WordCompleter(folders)
 
   validator = Validator.from_callable(
@@ -96,12 +99,7 @@ if __name__ == "__main__":
 
   if args.preffold_test:
     ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
-    sorted_folders = ph_ok_orig['folder'].value_counts().index.values
-    print([f.split("/") for f in sorted_folders])
-    exit(2)
-
-    folds = np.load("folds.npy")
-    preferred_folder(folds, ['/Volumes/frø/photo_bank', '/Volumes/frøhvelv/photo_bank'])
+    preferred_folder(ph_ok_orig['folder'])
     exit(2)
 
   data = None
