@@ -182,7 +182,7 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
 
       
 def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
-  str = ""
+  script_parts = []
   '''
   if [[ $(hostname) != 'Wintermute-Manoeuvre.local' ]]; then
     echo 'SCRIPT run on a different machine, confirm to proceed';
@@ -192,16 +192,23 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
     try:
       keeper = photos_df.loc[int(p.persist_version)]
     except:
-      #print(p)
-      keeper = {'folder':'', 'name':''}
+      print("{}There should always be a master file for all files to be removed{}".format(Fore.RED, Fore.RESET))
+      continue
     
-    if os.path.join(keeper['folder'], keeper['name']) == os.path.join(p['folder'], p['name']):
-      print("{}Why would we want to diff a file with itself?{}: {}".format(Fore.RED, Fore.RESET, os.path.join(p['folder'], p['name'])))
+    keeper_path = os.path.join(keeper['folder'], keeper['name'])
+    removal_path = os.path.join(p['folder'], p['name'])
 
-    str += "diff \"{}\" \"{}\"".format(os.path.join(keeper['folder'], keeper['name']), os.path.join(p['folder'], p['name']))
-    str += " && echo \'rm \"{}\"\'\n".format(os.path.join(p['folder'], p['name']))
+    if keeper_path == removal_path:
+      print("{}Why would we want to diff a file with itself?{}: {}".format(Fore.RED, Fore.RESET, removal_path))
+      continue
+
+    script_parts.append("diff \"{0}\" \"{1}\" && echo \'rm \"{1}\"\'".format(
+                    keeper_path, removal_path
+                ))
+
+  script_content = "\n".join(script_parts)
   with open(dupes_script, 'w') as f:
-      f.write(str)
+      f.write(script_content)
 
 def read_datafiles(running_working_info, datafiles, deduplicate=True):
   ph_working_info = pd.DataFrame()
