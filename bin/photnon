@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from photnon.data_extraction import extract_data
-from photnon.data_analysis import bsize_value, report_dupes, generate_dupes_info, produce_dupes_script, REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP, read_datafiles
+from photnon.data_analysis import bsize_value, deduplication_process, REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP, read_datafiles
 
 import os
 import sys
@@ -35,21 +35,36 @@ def all_folders_with_counts(folders):
   folder_tokens_counts = pd.concat([pd.DataFrame(folder_tokens, index=folder_counts.index), folder_counts.to_frame()], axis=1)
 
   file_counts = pd.Series()
-  last = None
+  last_level_counts = None
   for top in range(1, len(folder_tokens_counts.columns)-1):
     positions = list(folder_tokens_counts.columns[:-top].values)
-    folder_tolens_counts_aggregated = folder_tokens_counts.loc[~folder_tokens_counts[positions[-1]].isna()].fillna('').groupby(positions, axis=0).sum()
+    folder_tokens_counts_aggregated = folder_tokens_counts.loc[~folder_tokens_counts[positions[-1]].isna()].fillna('').groupby(positions, axis=0).sum()
 
-    if np.array_equal(folder_tolens_counts_aggregated.values, last):
-      break
-    last = folder_tolens_counts_aggregated.values
-    file_counts = file_counts.append(folder_tolens_counts_aggregated['folder'])
+    # This is a pretty simplistic stopping clause, because it assumes the bottom is reached at the same time
+    if last_level_counts is not None:
+      for new_level_index in folder_tokens_counts_aggregated.index:
+        # If a given new aggregated index has a single child...
+        if new_level_index in last_level_counts.index:
+          if len(last_level_counts.loc[new_level_index, :]) == 1:
+            # Then we find and remove entries on the master count, to stop counting those
+            folder_tokens_counts_aggregated.drop(new_level_index, axis=0, inplace=True)
+            subqueries = []
+            for i in positions:
+              subqueries.append("(@new_level_index[{0}] == @folder_tokens_counts[{0}])".format(i))
+            query = " & ".join(subqueries)
+            folder_tokens_counts.drop(folder_tokens_counts.query(query).index, inplace=True)
+
+      # if all entries in the new count are parents of previous ones, and they don't add anything,
+      # they'll be gone at this point.
+      if len(folder_tokens_counts_aggregated) == 0:
+        break
+    last_level_counts = folder_tokens_counts_aggregated.copy()
+    file_counts = file_counts.append(folder_tokens_counts_aggregated['folder'])
 
   return file_counts.sort_values(ascending=False)
 
 def preferred_folder(full_folders):
   folders = all_folders_with_counts(full_folders).index.map(lambda ix: os.path.sep.join(ix))
-  # print("\n".join(folders[0:10]))
   folder_completer = WordCompleter(folders)
 
   validator = Validator.from_callable(
@@ -89,7 +104,9 @@ if __name__ == "__main__":
             nargs='+',
             help='files, folders or pattern space to explore',
             dest='space')
-
+  parser.add_argument('-p', '--preferred',
+            help='preferred folder to consider when processing duplicates (otherwise it will be asked interactively)',
+            dest='preferred_folder')
   # test
   parser.add_argument('-t',
     dest='preffold_test',
@@ -98,8 +115,11 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   if args.preffold_test:
+    if args.preferred_folder:
+      print(args.preferred_folder)
+      exit(4)
     ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
-    preferred_folder(ph_ok_orig['folder'])
+    preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
     exit(2)
 
   data = None
@@ -170,6 +190,9 @@ if __name__ == "__main__":
                   sum(ph_ok[ph_ok.timeless].second_discrepancy <= 3600)/len(ph_ok[ph_ok.timeless]),
                   sum(ph_ok[ph_ok.timeless].second_discrepancy <= 24*3600)/len(ph_ok[ph_ok.timeless])))
 
+      print("{}Temporarily, selection of the preferred folder takes place here (it should be below the initial analysis)".format(Fore.GREEN))
+      preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
+
       for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
         print("{}================================ {} set".format(Fore.YELLOW, label))
         # All duplicates
@@ -178,10 +201,6 @@ if __name__ == "__main__":
         # Not used, but I was logging that before
         dup_full_reduced = dup_full ^ dup_full_except_first
 
-        #if len(photos_df[dup_full]) > 0:
-        #  print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-        #            (photos_df[dup_full].folder.value_counts()).to_string()))
-  
         # Digest duplicates, computed differently. Clearly slower and more complex (more lines) but it doesn't matter that much
         list_digest = photos_df.digest.value_counts()
         dup_digest_values = list_digest[list_digest > 1].index.values
@@ -225,7 +244,6 @@ if __name__ == "__main__":
         '''confirm(
               suffix="(y/N)",
               message="Do you want to process OK duplicates?")'''
-  
         if result:
           #if confirm(
           #      suffix="(y/N)",
@@ -239,20 +257,11 @@ if __name__ == "__main__":
           #  with open('inspection_OK.html', 'w') as f:
           #    f.write(str)
   
-          # Keep everything by default
-          photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
-          photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
-  
           #preferred_folder(photos_df.loc[dup_full].folder.unique())
 
-          print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
-          generate_dupes_info(photos_df, dup_full, verbose = args.verbose)
-          report_dupes(photos_df, dup_full, sum(dup_digest_except_first), verbose = args.verbose)
-  
-          print("{}   - digest -{}".format(Fore.GREEN,Fore.RESET))
-          generate_dupes_info(photos_df, dup_digest, verbose = args.verbose)
-          report_dupes(photos_df, dup_digest, sum(dup_digest_except_first), verbose = args.verbose)
-          produce_dupes_script(photos_df, dup_digest, "dup_actions_{}.sh".format(label))
+          deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
+                preferred_folder='/Volumes/frø/flickr_backup',
+                goal=sum(dup_digest_except_first), verbose = args.verbose)
 
       # ALL sets processed
       if args.output is not None:

@@ -86,17 +86,17 @@ def select_best_alternative_index(alternatives):
   return alternatives.sort_values('mtime')['index'].values[0]
 
 
-def decide_removal_action(x, persist_candidates, decide_removal_entries):
+def decide_removal_action(x, preferred_candidates, decide_removal_entries):
   '''
   'decide_removal_entries' are indexed by digest, with the original 'index' (which links to the original DataFrame) stored in an 'index' column
-  'persist_candidates' is indexed by digest, with the original 'index' (which links to the original DataFrame) stored in an 'index' column
+  'preferred_candidates' is indexed by digest, with the original 'index' (which links to the original DataFrame) stored in an 'index' column
   '''
-  if x.digest in persist_candidates.index:
-    master_candidates = persist_candidates.loc[x.digest]
+  if (preferred_candidates is not None) and (x.digest in preferred_candidates.index):
+    master_candidates = preferred_candidates.loc[[x.digest]]
     if len(master_candidates) == 1:
       # Single master candidate (we want to keep the entry if that's the master)
-      if master_candidates['index'] != x.name:
-        return {'persist_version':master_candidates['index'].values[0] , 'should_remove':REMOVAL_CODE_SCHEDULE}
+      if master_candidates['index'].values[0] != x.name:
+        return {'persist_version':master_candidates['index'].values[0], 'should_remove':REMOVAL_CODE_SCHEDULE}
       else:
         return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove': REMOVAL_CODE_KEEP}
 
@@ -118,7 +118,7 @@ def decide_removal_action(x, persist_candidates, decide_removal_entries):
     # Either there is no alternative or right now there is only one: this entry
     return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
-def generate_dupes_info(photos_df, dup_indexes, verbose=0):
+def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose=0):
   if len(photos_df[dup_indexes]) == 0:
     return
 
@@ -139,14 +139,14 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
                           len(photos_df_dups) - len(list_digest_dup)
                         ))
 
-  ''' to speed up testing '''
-  preferred_folder = '../flickr_backup/_whole'
-
   # Preserve 'preferred folder'. This doesn't work when duplicates are on the same one
-  persist_candidates_list = photos_df_dups['folder'].str.match(preferred_folder)
-  persist_candidates_index = photos_df_dups[persist_candidates_list].index
-  persist_candidates = photos_df.loc[persist_candidates_index]
-  persist_candidates = persist_candidates.reset_index().set_index('digest',drop=False)
+  if preferred_folder:
+    preferred_candidates_list = photos_df_dups['folder'].str.match(preferred_folder)
+    preferred_candidates_index = photos_df_dups[preferred_candidates_list].index
+    preferred_candidates = photos_df.loc[preferred_candidates_index]
+    preferred_candidates = preferred_candidates.reset_index().set_index('digest',drop=False)
+  else:
+    preferred_candidates = None
 
   photos_df.loc[photos_df_dups.index, 'should_remove'] = REMOVAL_CODE_POSIBLE
 
@@ -159,7 +159,7 @@ def generate_dupes_info(photos_df, dup_indexes, verbose=0):
   # Sorting the index makes the ,loc somewhat faster (2x-3x)
   decide_removal_entries = decide_removal_entries.reset_index().set_index('digest',drop=False).sort_index()
   photos_df.loc[photos_df_dups.index, ['persist_version', 'should_remove']] = decide_removal(
-          lambda x: decide_removal_action(x, persist_candidates, decide_removal_entries),
+          lambda x: decide_removal_action(x, preferred_candidates, decide_removal_entries),
           axis=1, result_type='expand')
 
   # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
@@ -215,7 +215,8 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
       store.close()
       last_working_info = pd.read_hdf("{}.pho".format(datafile), key='info')
       if last_working_info.loc[0, 'hostname'] != running_working_info['hostname'][0]:
-        print("Data file was generated at {}, but analysis is running on {}".format(
+        print("Datafile '{}{}{}' was generated at {}, but analysis is running on {}".format(
+            Fore.GREEN, datafile, Fore.RESET,
             last_working_info.loc[0, 'hostname'], running_working_info['hostname'][0]
           ))
       ph_working_info = pd.concat([ph_working_info, last_working_info])
@@ -251,3 +252,18 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
     ph_error = ph_error.drop_duplicates(keep='first')
   
   return ph_working_info, ph_ok, ph_error, num_read_ok, num_read_error
+
+def deduplication_process(photos_df, dup_full, dup_digest, output_script, preferred_folder=None, goal=0, verbose=0):
+  # process all entries from the input
+  photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
+  photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
+
+  print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
+  generate_dupes_info(photos_df, dup_full, preferred_folder, verbose = verbose)
+  report_dupes(photos_df, dup_full, goal, verbose = verbose)
+
+  print("{}   - digest -{}".format(Fore.GREEN,Fore.RESET))
+  generate_dupes_info(photos_df, dup_digest, preferred_folder, verbose = verbose)
+  report_dupes(photos_df, dup_digest, goal, verbose = verbose)
+  produce_dupes_script(photos_df, dup_digest, output_script)
+
