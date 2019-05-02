@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 from photnon.data_extraction import extract_data
-from photnon.data_analysis import bsize_value, deduplication_process, REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP, read_datafiles
+from photnon.data_analysis import deduplication_process, preduplication_info, timed_info, read_datafiles, produce_retime_script
+from photnon.data_analysis import REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP
 
 import os
 import sys
@@ -107,20 +108,8 @@ if __name__ == "__main__":
   parser.add_argument('-p', '--preferred',
             help='preferred folder to consider when processing duplicates (otherwise it will be asked interactively)',
             dest='preferred_folder')
-  # test
-  parser.add_argument('-t',
-    dest='preffold_test',
-    action='store_true')
 
   args = parser.parse_args()
-
-  if args.preffold_test:
-    if args.preferred_folder:
-      print(args.preferred_folder)
-      exit(4)
-    ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
-    preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
-    exit(2)
 
   data = None
   if args.datafiles:
@@ -149,8 +138,8 @@ if __name__ == "__main__":
               message="Do you want to proceed?"):
           sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
 
-      print("total        : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
-      print("deduplicated : {} (ok: {}/ error: {})".format(len(ph_ok_orig) + len(ph_error_orig), len(ph_ok_orig), len(ph_error_orig)))
+      print("original     : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
+      print("post-drop    : {} (ok: {}/ error: {})".format(len(ph_ok_orig) + len(ph_error_orig), len(ph_ok_orig), len(ph_error_orig)))
 
       ph_ok = ph_ok_orig
       ph_error = ph_error_orig
@@ -164,104 +153,47 @@ if __name__ == "__main__":
       num_error = len(ph_error)
       num_total = num_ok + num_error
       print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
-      print("{}================================".format(Fore.YELLOW))
+      #print("{}================================".format(Fore.YELLOW))
       print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
 
-      ph_ok['mtime_date'] = ph_ok.mtime.apply(lambda x: x.date())
-      ph_ok['datetime_date'] = ph_ok.datetime.apply(lambda x: x.date())
-      ph_ok['second_discrepancy'] = (ph_ok.datetime - ph_ok.mtime).apply(lambda x: abs(x.total_seconds()))
+      timed_info(ph_ok)
 
-      print("{}% matching times{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
-                sum(ph_ok.mtime == ph_ok.datetime)/len(ph_ok)))
-
-      print("{}% matching dates{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
-                sum(ph_ok.mtime_date == ph_ok.datetime_date)/len(ph_ok)))
-
-      print("{0}% with discrepancy{1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
-                sum(ph_ok.second_discrepancy <= 60)/len(ph_ok),
-                sum(ph_ok.second_discrepancy <= 3600)/len(ph_ok),
-                sum(ph_ok.second_discrepancy <= 24*3600)/len(ph_ok)))
-
-      print("{}% timeless{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
-                len(ph_ok[ph_ok.timeless])/len(ph_ok)))
-      if len(ph_ok[ph_ok.timeless]) > 0:
-        print("{0}% with discrepancy (timeless) {1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
-                  sum(ph_ok[ph_ok.timeless].second_discrepancy <= 60)/len(ph_ok[ph_ok.timeless]),
-                  sum(ph_ok[ph_ok.timeless].second_discrepancy <= 3600)/len(ph_ok[ph_ok.timeless]),
-                  sum(ph_ok[ph_ok.timeless].second_discrepancy <= 24*3600)/len(ph_ok[ph_ok.timeless])))
-
-      print("{}Temporarily, selection of the preferred folder takes place here (it should be below the initial analysis)".format(Fore.GREEN))
-      preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
+      if args.preferred_folder:
+        preferred_folder = args.preferred_folder
+      else:
+        print("{}Calculating default folder priority, to display options by number of files".format(Fore.GREEN))
+        preferred_folder = preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
 
       for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
         print("{}================================ {} set".format(Fore.YELLOW, label))
         # All duplicates
         dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
         dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
-        # Not used, but I was logging that before
-        dup_full_reduced = dup_full ^ dup_full_except_first
 
         # Digest duplicates, computed differently. Clearly slower and more complex (more lines) but it doesn't matter that much
         list_digest = photos_df.digest.value_counts()
-        dup_digest_values = list_digest[list_digest > 1].index.values
-        dup_digest = photos_df.digest.isin(dup_digest_values)
+        dup_digest = photos_df.digest.isin(list_digest[list_digest > 1].index.values)
         dup_digest_except_first = photos_df.duplicated(keep='first', subset=['digest'])
 
-        #if len(photos_df[dup_digest]) > 0:
-        #  print("{}- in folders:\n{}{}".format(Fore.GREEN,Fore.RESET,
-        #          (photos_df[dup_digest].folder.value_counts()).to_string()))
-        print("photos {}, after reducing:".format(
-          len(photos_df)
-          ))
-        print("   - full   -> {} (removing {} and processing {})".format(
-          sum(~dup_full_except_first),
-          sum(dup_full_except_first),
-          sum(dup_full)
-          ))
-        print("   - digest -> {} (removing {} and processing {})".format(
-          sum(~dup_digest_except_first),
-          sum(dup_digest_except_first),
-          sum(dup_digest)
-          ))
-
-        if 'size' in photos_df:
-          print("size {:.3f} {}, after reducing:".format(
-            *bsize_value(photos_df['size'].sum())
-            ))
-          print("   - full   -> {:.3f} {} (removing {:.3f} {} and processing {:.3f} {})".format(
-            *bsize_value(photos_df[~dup_full_except_first]['size'].sum()),
-            *bsize_value(photos_df[dup_full_except_first]['size'].sum()),
-            *bsize_value(photos_df[dup_full]['size'].sum())
-            ))
-          print("   - digest -> {:.3f} {} (removing {:.3f} {} and processing {:.3f} {})".format(
-            *bsize_value(photos_df[~dup_digest_except_first]['size'].sum()),
-            *bsize_value(photos_df[dup_digest_except_first]['size'].sum()),
-            *bsize_value(photos_df[dup_digest]['size'].sum())
-            ))
-        print()
-
-        result = True
-        '''confirm(
-              suffix="(y/N)",
-              message="Do you want to process OK duplicates?")'''
-        if result:
-          #if confirm(
-          #      suffix="(y/N)",
-          #      message="Generate simple HTML for inspection?"):
-          #  print("HTML will be generated")
-          #  str = "<html><body>"
-          #  for i, p in photos_df[dup_full].sort_values(by=['name', 'folder']).iterrows():#.path.values:
-          #    src = os.path.join(p['folder'], p['name'])
-          #    str+="<div>{}<img src='{}' width='30%'/></div>".format(src, src)
-          #  str +="</body></html>"
-          #  with open('inspection_OK.html', 'w') as f:
-          #    f.write(str)
-  
-          #preferred_folder(photos_df.loc[dup_full].folder.unique())
-
-          deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
-                preferred_folder='/Volumes/frø/flickr_backup',
+        preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first)
+        deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
+                preferred_folder=preferred_folder,
                 goal=sum(dup_digest_except_first), verbose = args.verbose)
+
+
+      print("\n{}================================ after deduplication".format(Fore.YELLOW))
+      num_ok = len(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
+      num_error = len(ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
+      num_total = num_ok + num_error
+      print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
+      print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
+      timed_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
+
+      produce_retime_script(ph_ok, script="retime.sh")
+
+
+
+
 
       # ALL sets processed
       if args.output is not None:
@@ -289,4 +221,3 @@ if __name__ == "__main__":
             if False:
               os.rename(datafilename, "{}_back".format(datafilename))
             os.rename(os.path.join(tempdir,'repackedfile'), datafilename)
-

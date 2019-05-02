@@ -181,7 +181,7 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
     raise Exception("Some file intented as a master are to be removed!")
 
       
-def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
+def produce_dupes_script(photos_df, dup_indexes, script="dupes.sh"):
   script_parts = []
   '''
   if [[ $(hostname) != 'Wintermute-Manoeuvre.local' ]]; then
@@ -207,8 +207,31 @@ def produce_dupes_script(photos_df, dup_indexes, dupes_script="dupes.sh"):
                 ))
 
   script_content = "\n".join(script_parts)
-  with open(dupes_script, 'w') as f:
+  with open(script, 'w') as f:
       f.write(script_content)
+
+def produce_retime_script(photos_df, script="retime.sh"):
+  ''' A pure python implementation is slower than 'touch' when executed file by file.
+  It might be possible (and better) executing as a loop, but using python is less portable.
+  In any case, a pure python version would look like this:
+
+  import time, os
+  atime = os.stat(filepath).st_atime
+  mtime = pic['date'].timestamp()  # Or from some other time variable in string format (needs to be transformed into timestamp)
+  # or mtime = time.mktime(time.strptime(pic['date'], '%Y-%m-%d %H:%M:%S'));
+  os.utime(filepath, (atime, mtime))  # This typically modifies the 'ctime' as well on macOS
+  '''
+  script_parts = []
+  single_test_entry = photos_df.iloc[0]
+  script_parts.append("touch -m -t \"{0:%Y%m%d%H%M.%S}\" \"{1}\"".format(
+                    single_test_entry['datetime'], os.path.join(single_test_entry['folder'], single_test_entry['name']),
+                )) #touch -m -t 201812121110#[[CC]YY]MMDDhhmm[.SS]
+
+  script_content = "\n".join(script_parts)
+  print(script_content)
+  #with open(script, 'w') as f:
+  #    f.write(script_content)
+
 
 def read_datafiles(running_working_info, datafiles, deduplicate=True):
   ph_working_info = pd.DataFrame()
@@ -244,12 +267,14 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   ph_ok.reset_index(inplace=True)
   if 'persist_version' in ph_ok.columns:
     map_reindex = {v:k for k,v in ph_ok['index'].to_dict().items()}
-    ph_ok['persist_version'] = ph_ok['persist_version'].transfom(lambda x: map_reindex[x])
+    map_reindex[PERSIST_VERSION_KEEP] = PERSIST_VERSION_KEEP
+    ph_ok['persist_version'] = ph_ok['persist_version'].transform(lambda x: map_reindex[x])
   ph_ok.drop('index', axis=1, inplace=True)
   ph_error.reset_index(inplace=True)
   if 'persist_version' in ph_error.columns:
     map_reindex = {v:k for k,v in ph_error['index'].to_dict().items()}
-    ph_error['persist_version'] = ph_error['persist_version'].transfom(lambda x: map_reindex[x])
+    map_reindex[PERSIST_VERSION_KEEP] = PERSIST_VERSION_KEEP
+    ph_error['persist_version'] = ph_error['persist_version'].transform(lambda x: map_reindex[x])
   ph_error.drop('index', axis=1, inplace=True)
 
   num_read_ok = len(ph_ok)
@@ -265,12 +290,87 @@ def deduplication_process(photos_df, dup_full, dup_digest, output_script, prefer
   photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
   photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
 
-  print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
-  generate_dupes_info(photos_df, dup_full, preferred_folder, verbose = verbose)
-  report_dupes(photos_df, dup_full, goal, verbose = verbose)
+  if sum(dup_full) != 0:
+    print("{}   - full -{}".format(Fore.GREEN,Fore.RESET))
+    generate_dupes_info(photos_df, dup_full, preferred_folder, verbose = verbose)
+    report_dupes(photos_df, dup_full, goal, verbose = verbose)
 
-  print("{}   - digest -{}".format(Fore.GREEN,Fore.RESET))
-  generate_dupes_info(photos_df, dup_digest, preferred_folder, verbose = verbose)
-  report_dupes(photos_df, dup_digest, goal, verbose = verbose)
+  if sum(dup_digest) != 0:
+    print("{}   - digest -{}".format(Fore.GREEN,Fore.RESET))
+    generate_dupes_info(photos_df, dup_digest, preferred_folder, verbose = verbose)
+    report_dupes(photos_df, dup_digest, goal, verbose = verbose)
+
   produce_dupes_script(photos_df, dup_digest, output_script)
 
+def preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first):
+  num_photos = len(photos_df)
+  if sum(dup_full) != 0 | sum(dup_digest) != 0:
+    print("photos {}, after reducing:".format(
+        num_photos
+      ))
+  else:
+    print("photos {}".format(
+        num_photos
+      ))
+
+  if sum(dup_full) != 0:
+    print("   - full   -> {} (removing {} and processing {})".format(
+      sum(~dup_full_except_first),
+      sum(dup_full_except_first),
+      sum(dup_full)
+      ))
+  if sum(dup_digest) != 0:
+    print("   - digest -> {} (removing {} and processing {})".format(
+      sum(~dup_digest_except_first),
+      sum(dup_digest_except_first),
+      sum(dup_digest)
+      ))
+
+  if 'size' in photos_df:
+    size_photos = bsize_value(photos_df['size'].sum())
+    if sum(dup_full) != 0 | sum(dup_digest) != 0:
+      print("size {:.3f} {}, after reducing:".format(
+          *size_photos
+        ))
+    else:
+      print("size {:.3f} {}".format(
+          *size_photos
+        ))
+
+    if sum(dup_full) != 0:
+      print("   - full   -> {:.3f} {} (removing {:.3f} {} and processing {:.3f} {})".format(
+          *bsize_value(photos_df[~dup_full_except_first]['size'].sum()),
+          *bsize_value(photos_df[dup_full_except_first]['size'].sum()),
+          *bsize_value(photos_df[dup_full]['size'].sum())
+        ))
+    if sum(dup_digest) != 0:
+      print("   - digest -> {:.3f} {} (removing {:.3f} {} and processing {:.3f} {})".format(
+          *bsize_value(photos_df[~dup_digest_except_first]['size'].sum()),
+          *bsize_value(photos_df[dup_digest_except_first]['size'].sum()),
+          *bsize_value(photos_df[dup_digest]['size'].sum())
+        ))
+  print()
+
+def timed_info(photos_df_timed):
+  photos_df_timed['mtime_date'] = photos_df_timed.mtime.apply(lambda x: x.date())
+  photos_df_timed['datetime_date'] = photos_df_timed.datetime.apply(lambda x: x.date())
+  photos_df_timed['second_discrepancy'] = (photos_df_timed.datetime - photos_df_timed.mtime).apply(lambda x: abs(x.total_seconds()))
+
+  print("{}% matching times{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+            sum(photos_df_timed.mtime == photos_df_timed.datetime)/len(photos_df_timed)))
+
+  print("{}% matching dates{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+            sum(photos_df_timed.mtime_date == photos_df_timed.datetime_date)/len(photos_df_timed)))
+
+  print("{0}% with discrepancy{1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
+            sum(photos_df_timed.second_discrepancy <= 60)/len(photos_df_timed),
+            sum(photos_df_timed.second_discrepancy <= 3600)/len(photos_df_timed),
+            sum(photos_df_timed.second_discrepancy <= 24*3600)/len(photos_df_timed)))
+
+  print("{}% timeless{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+            len(photos_df_timed[photos_df_timed.timeless])/len(photos_df_timed)))
+  if len(photos_df_timed[photos_df_timed.timeless]) > 0:
+    print("{0}% with discrepancy (timeless) {1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
+              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 60)/len(photos_df_timed[photos_df_timed.timeless]),
+              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 3600)/len(photos_df_timed[photos_df_timed.timeless]),
+              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 24*3600)/len(photos_df_timed[photos_df_timed.timeless])))
