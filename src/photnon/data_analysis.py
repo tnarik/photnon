@@ -222,15 +222,13 @@ def produce_retime_script(photos_df, script="retime.sh"):
   os.utime(filepath, (atime, mtime))  # This typically modifies the 'ctime' as well on macOS
   '''
   script_parts = []
-  single_test_entry = photos_df.iloc[0]
-  script_parts.append("touch -m -t \"{0:%Y%m%d%H%M.%S}\" \"{1}\"".format(
-                    single_test_entry['datetime'], os.path.join(single_test_entry['folder'], single_test_entry['name']),
-                )) #touch -m -t 201812121110#[[CC]YY]MMDDhhmm[.SS]
-
+  for i, p in photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE].iterrows():
+    script_parts.append("touch -m -t \"{0:%Y%m%d%H%M.%S}\" \"{1}\"".format(
+                      p['datetime'], os.path.join(p['folder'], p['name']),
+                  ))
   script_content = "\n".join(script_parts)
-  print(script_content)
-  #with open(script, 'w') as f:
-  #    f.write(script_content)
+  with open(script, 'w') as f:
+      f.write(script_content)
 
 
 def read_datafiles(running_working_info, datafiles, deduplicate=True):

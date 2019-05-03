@@ -65,7 +65,10 @@ def all_folders_with_counts(folders):
   return file_counts.sort_values(ascending=False)
 
 def preferred_folder(full_folders):
+  NONE_PREFERRED = '[NONE]'
+
   folders = all_folders_with_counts(full_folders).index.map(lambda ix: os.path.sep.join(ix))
+  folders = folders.insert(0, NONE_PREFERRED)
   folder_completer = WordCompleter(folders)
 
   validator = Validator.from_callable(
@@ -74,14 +77,16 @@ def preferred_folder(full_folders):
     move_cursor_to_end=True)
   preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
     validator=validator)
-  print(preferred_folder)
+
+  if preferred_folder == NONE_PREFERRED: preferred_folder = None
+  return preferred_folder
 
 
 if __name__ == "__main__":
   # working_info adds information about the data extraction process (as the files were last accessed in that context)
   working_info = { 'wd': [os.getcwd()],
                    'hostname': [os.uname()[1]] }
-  parser = argparse.ArgumentParser(description="Photon")
+  parser = argparse.ArgumentParser(description="Photon", prefix_chars="-+")
   parser.add_argument('-d', '--data',
             nargs='+',
             help='data files. if -s is used, only the first datafile will be taken into account',
@@ -108,6 +113,10 @@ if __name__ == "__main__":
   parser.add_argument('-p', '--preferred',
             help='preferred folder to consider when processing duplicates (otherwise it will be asked interactively)',
             dest='preferred_folder')
+  parser.add_argument('+p', '--no-preferred',
+            help='disable preferred folder to consider when processing duplicates',
+            action='store_true',
+            dest='no_preferred')
 
   args = parser.parse_args()
 
@@ -158,11 +167,14 @@ if __name__ == "__main__":
 
       timed_info(ph_ok)
 
-      if args.preferred_folder:
-        preferred_folder = args.preferred_folder
+      if args.no_preferred:
+        preferred_folder = None
       else:
-        print("{}Calculating default folder priority, to display options by number of files".format(Fore.GREEN))
-        preferred_folder = preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
+        if args.preferred_folder:
+          preferred_folder = args.preferred_folder
+        else:
+          print("{}Calculating default folder priority, to display options by number of files".format(Fore.GREEN))
+          preferred_folder = preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
 
       for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
         print("{}================================ {} set".format(Fore.YELLOW, label))
