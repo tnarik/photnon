@@ -1,5 +1,7 @@
 import os
 
+from photnon import storage
+
 import pandas as pd
 from tqdm import tqdm
 tqdm.pandas()
@@ -238,10 +240,10 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
 
   for datafile in datafiles:
     last_working_info = None
-    store = pd.HDFStore("{}.pho".format(datafile))
+    store = pd.HDFStore(storage.normalize(datafile))
     if '/info' in store:
       store.close()
-      last_working_info = pd.read_hdf("{}.pho".format(datafile), key='info')
+      last_working_info = pd.read_hdf(storage.normalize(datafile), key='info')
       if last_working_info.loc[0, 'hostname'] != running_working_info['hostname'][0]:
         print("Datafile '{}{}{}' was generated at {}, but analysis is running on {}".format(
             Fore.GREEN, datafile, Fore.RESET,
@@ -253,8 +255,8 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
       store.close()
       print("{}Datafile '{}{}{}' doesn't contain 'info':{} be extra vigilant\n".format(Fore.RED, Fore.GREEN, datafile, Fore.RED, Fore.RESET))
   
-    ph_ok = pd.concat([ph_ok, pd.read_hdf("{}.pho".format(datafile), key='ok')])
-    ph_error = pd.concat([ph_error, pd.read_hdf("{}.pho".format(datafile), key='error')])
+    ph_ok = pd.concat([ph_ok, pd.read_hdf(storage.normalize(datafile), key='ok')])
+    ph_error = pd.concat([ph_error, pd.read_hdf(storage.normalize(datafile), key='error')])
     if last_working_info is not None:
       # Sanitize folders
       wd = last_working_info.loc[0, 'wd']

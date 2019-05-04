@@ -3,6 +3,7 @@
 from photnon.data_extraction import extract_data
 from photnon.data_analysis import deduplication_process, preduplication_info, timed_info, read_datafiles, produce_retime_script
 from photnon.data_analysis import REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP
+from photnon import storage
 
 import os
 import sys
@@ -29,6 +30,7 @@ init(autoreset=True)
 
 EXIT_CODE_WORKINGINFO_MISMATCH = 100
 EXIT_CODE_NO_SINGLE_OUTPUT = 101
+EXIT_CODE_NO_COMMANDS = 102
 
 def all_folders_with_counts(folders):
   folder_counts = folders.value_counts()
@@ -117,6 +119,10 @@ if __name__ == "__main__":
             help='disable preferred folder to consider when processing duplicates',
             action='store_true',
             dest='no_preferred')
+  parser.add_argument('-l', '--list',
+            help='list information about the datafile',
+            action='store_true',
+            dest='list')
 
   args = parser.parse_args()
 
@@ -127,109 +133,119 @@ if __name__ == "__main__":
     print('NO datafiles specified')
 
 
+  # First step is reading files
   if args.space:
-    extract_data(args.space, args.datafiles[0] if args.datafiles else None, verbose=args.verbose, working_info=working_info, force=args.force)
+    extract_data(args.space, args.datafiles[0] if args.datafiles else None, working_info=working_info, verbose=args.verbose, force=args.force)
+    exit()
+
+  # If we are not reading files, then we should be reading data
+  if not args.datafiles:
+    parser.print_help()
+    exit(EXIT_CODE_NO_COMMANDS)
+
+
+
+  computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
+  divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
+
+  ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
+  if args.list:
+    print(ph_working_info)
+    print(ph_ok_orig.columns)
+    exit()
+
+  if len(ph_working_info) < len(args.datafiles) or ph_working_info.hostname.nunique() > 1:
+    print(ph_working_info)
+    print("{}Datafiles generated on different (or unknown) systems".format(Fore.RED, Fore.RESET))
+    print("{}Final scripts would run on a single machine, which could cause problems in some scenarios (see README.md).{}".format(Fore.YELLOW, Fore.RESET))
+    if not confirm(
+          suffix="(y/N)",
+          message="Do you want to proceed?"):
+      sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
+
+  print("original     : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
+  print("post-drop    : {} (ok: {}/ error: {})".format(len(ph_ok_orig) + len(ph_error_orig), len(ph_ok_orig), len(ph_error_orig)))
+
+  ph_ok = ph_ok_orig
+  ph_error = ph_error_orig
+  if not args.force:
+    if 'should_remove' in ph_ok_orig.columns:
+      ph_ok = ph_ok_orig.loc[ph_ok_orig[ph_ok_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
+    if 'should_remove' in ph_error_orig.columns:
+      ph_error = ph_error_orig.loc[ph_error_orig[ph_error_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
+
+  num_ok = len(ph_ok)
+  num_error = len(ph_error)
+  num_total = num_ok + num_error
+  print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
+  #print("{}================================".format(Fore.YELLOW))
+  print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
+
+  timed_info(ph_ok)
+
+  if args.no_preferred:
+    preferred_folder = None
   else:
-    if not args.datafiles:
-      parser.print_help()
+    if args.preferred_folder:
+      preferred_folder = args.preferred_folder
     else:
-      computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
-      divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
+      print("{}Calculating default folder priority, to display options by number of files".format(Fore.GREEN))
+      preferred_folder = preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
 
-      ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
+  for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
+    print("{}================================ {} set".format(Fore.YELLOW, label))
+    # All duplicates
+    dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
+    dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
 
-      if len(ph_working_info) < len(args.datafiles) or ph_working_info.hostname.nunique() > 1:
-        print(ph_working_info)
-        print("{}Datafiles generated on different (or unknown) systems".format(Fore.RED, Fore.RESET))
-        print("{}Final scripts would run on a single machine, which could cause problems in some scenarios (see README.md).{}".format(Fore.YELLOW, Fore.RESET))
-        if not confirm(
-              suffix="(y/N)",
-              message="Do you want to proceed?"):
-          sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
+    # Digest duplicates, computed differently. Clearly slower and more complex (more lines) but it doesn't matter that much
+    list_digest = photos_df.digest.value_counts()
+    dup_digest = photos_df.digest.isin(list_digest[list_digest > 1].index.values)
+    dup_digest_except_first = photos_df.duplicated(keep='first', subset=['digest'])
 
-      print("original     : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
-      print("post-drop    : {} (ok: {}/ error: {})".format(len(ph_ok_orig) + len(ph_error_orig), len(ph_ok_orig), len(ph_error_orig)))
-
-      ph_ok = ph_ok_orig
-      ph_error = ph_error_orig
-      if not args.force:
-        if 'should_remove' in ph_ok_orig.columns:
-          ph_ok = ph_ok_orig.loc[ph_ok_orig[ph_ok_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
-        if 'should_remove' in ph_error_orig.columns:
-          ph_error = ph_error_orig.loc[ph_error_orig[ph_error_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
-
-      num_ok = len(ph_ok)
-      num_error = len(ph_error)
-      num_total = num_ok + num_error
-      print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
-      #print("{}================================".format(Fore.YELLOW))
-      print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
-
-      timed_info(ph_ok)
-
-      if args.no_preferred:
-        preferred_folder = None
-      else:
-        if args.preferred_folder:
-          preferred_folder = args.preferred_folder
-        else:
-          print("{}Calculating default folder priority, to display options by number of files".format(Fore.GREEN))
-          preferred_folder = preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
-
-      for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
-        print("{}================================ {} set".format(Fore.YELLOW, label))
-        # All duplicates
-        dup_full = photos_df.duplicated(keep=False, subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
-        dup_full_except_first = photos_df.duplicated(keep='first', subset=photos_df.columns[1:].drop(divergent_columns, errors='ignore'))
-
-        # Digest duplicates, computed differently. Clearly slower and more complex (more lines) but it doesn't matter that much
-        list_digest = photos_df.digest.value_counts()
-        dup_digest = photos_df.digest.isin(list_digest[list_digest > 1].index.values)
-        dup_digest_except_first = photos_df.duplicated(keep='first', subset=['digest'])
-
-        preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first)
-        deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
-                preferred_folder=preferred_folder,
-                goal=sum(dup_digest_except_first), verbose = args.verbose)
+    preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first)
+    deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
+            preferred_folder=preferred_folder,
+            goal=sum(dup_digest_except_first), verbose = args.verbose)
 
 
-      print("\n{}================================ after deduplication".format(Fore.YELLOW))
-      num_ok = len(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
-      num_error = len(ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
-      num_total = num_ok + num_error
-      print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
-      print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
-      timed_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
+  print("\n{}================================ after deduplication".format(Fore.YELLOW))
+  num_ok = len(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
+  num_error = len(ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
+  num_total = num_ok + num_error
+  print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
+  print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
+  timed_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
 
-      produce_retime_script(ph_ok, script="retime.sh")
+  produce_retime_script(ph_ok, script="retime.sh")
 
 
 
 
+  # ALL sets processed
+  if args.output is not None:
+    if len(args.output) > 0:
+      print("use '{}'".format(args.output))
+      datafilename = storage.normalize(args.output)
+    elif len(args.datafiles) == 1:
+      print("use '{}'".format(args.datafiles[0]))
+      datafilename = storage.normalize(args.datafiles[0])
+    else:
+      print("There are several input datafiles and no single output")
+      sys.exit(EXIT_CODE_NO_SINGLE_OUTPUT)
 
-      # ALL sets processed
-      if args.output is not None:
-        if len(args.output) > 0:
-          print("use '{}'".format(args.output))
-          datafilename = "{}.pho".format(args.output)
-        elif len(args.datafiles) == 1:
-          print("use '{}'".format(args.datafiles[0]))
-          datafilename = "{}.pho".format(args.datafiles[0])
-        else:
-          print("There are several input datafiles and no single output")
-          sys.exit(EXIT_CODE_NO_SINGLE_OUTPUT)
+    ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
+    ph_error.to_hdf(datafilename, key='error', format="table")
+    # After reading the datafiles, the working information needs to be sanitised and refreshed
+    pd.DataFrame( { 'wd': ['.'],
+                    'hostname': [os.uname()[1]] }
+                ).to_hdf(datafilename, key='info', format="table")
 
-        ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
-        ph_error.to_hdf(datafilename, key='error', format="table")
-        # After reading the datafiles, the working information needs to be sanitised and refreshed
-        pd.DataFrame( { 'wd': ['.'],
-                        'hostname': [os.uname()[1]] }
-                    ).to_hdf(datafilename, key='info', format="table")
-
-        if args.repack:
-          with tempfile.TemporaryDirectory() as tempdir:
-            sys.argv = ['ptrepack', datafilename, os.path.join(tempdir,'repackedfile')]
-            ptrepack.main()
-            if False:
-              os.rename(datafilename, "{}_back".format(datafilename))
-            os.rename(os.path.join(tempdir,'repackedfile'), datafilename)
+    if args.repack:
+      with tempfile.TemporaryDirectory() as tempdir:
+        sys.argv = ['ptrepack', datafilename, os.path.join(tempdir,'repackedfile')]
+        ptrepack.main()
+        # Enable below line if you want to keep a backup of the previous HDF5 datafile
+        if False:
+          os.rename(datafilename, "{}_back".format(datafilename))
+        os.rename(os.path.join(tempdir,'repackedfile'), datafilename)

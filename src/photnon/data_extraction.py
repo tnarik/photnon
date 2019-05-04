@@ -23,6 +23,8 @@ import time
 import pandas as pd
 from datetime import datetime as dt
 
+from photnon import storage
+
 from colorama import init, Fore
 init(autoreset=True)
 
@@ -52,6 +54,7 @@ def identify_file(path, name, verbose=0):
   digest = None
   mime = None
   code = CODE_OK
+  has_json = False
 
   stats = os.stat(path)
   atime = dt.fromtimestamp(stats.st_atime)
@@ -68,6 +71,9 @@ def identify_file(path, name, verbose=0):
   if stats.st_size == 0:
     code = CODE_SIZE_ZERO
   else:
+    # Are there metadata as .json?
+    has_json = os.path.exists(os.path.splitext(path)[0]+'.json')
+
     try:
       pic_exif = piexif.load(path)
       if verbose > 4 : print(pic_exif)
@@ -131,7 +137,7 @@ def identify_file(path, name, verbose=0):
       else:
         if verbose: print("   {}NOT even NOW - {}".format(Fore.RED, name))
 
-  return (datetime, make, model, digest, mime, code, stats.st_size, atime, mtime, ctime)
+  return (datetime, make, model, digest, mime, code, stats.st_size, atime, mtime, ctime, has_json)
 
 def filter_out(n, f):
   for ign in IGNORED_FOLDERS:
@@ -142,11 +148,12 @@ def filter_out(n, f):
     f = list(filter(lambda x: ign.match(x) is None,f))
   return n, f
 
-def explore(space):
+def explore(space, working_info):
   """ files can be either a file, a folder or a pattern
     It can also be a list of files, folders or patterns.
   """
   data = []
+  working_info['sources'] = []
 
   if type(space) is not list:
     space = [space]
@@ -154,9 +161,10 @@ def explore(space):
   for source in space:
     for path in glob.iglob(source):
       if os.path.isfile(path):
-        datetime, make, model, digest, mime, code, size, atime, mtime, ctime = identify_file(path, os.path.split(path)[1])
-        data.append([*os.path.split(path), datetime, make, model, digest, code, size, atime, mtime, ctime ])
+        datetime, make, model, digest, mime, code, size, atime, mtime, ctime, has_json = identify_file(path, os.path.split(path)[1])
+        data.append([*os.path.split(path), datetime, make, model, digest, code, size, atime, mtime, ctime, has_json ])
       else:
+        working_info['sources'].append(path)
         # Pre-calculation of data size to process
         total_size = 0
         for p,n,f in os.walk(path):
@@ -171,24 +179,27 @@ def explore(space):
             n, f = filter_out(n,f)
             for file in tqdm(f):
               pbar.update(os.stat(os.path.join(p, file)).st_size)
-              datetime, make, model, digest, mime, code, size, atime, mtime, ctime = identify_file(os.path.join(p,file), file)
+              datetime, make, model, digest, mime, code, size, atime, mtime, ctime, has_json = identify_file(os.path.join(p,file), file)
               if code is None:
                 continue
       
-              data.append([p, file, datetime, make, model, digest, mime, code, size, atime, mtime, ctime ])
+              data.append([p, file, datetime, make, model, digest, mime, code, size, atime, mtime, ctime, has_json ])
               # file sizes # pbar.update()
 
   return data
 
-def extract_data(space, datafile = None, verbose=0, working_info=None, force=False):
+def extract_data(space, datafile = None, working_info=None, verbose=0, force=False):
   if verbose >= 1: print("As a list of spaces has been specified, analysis will take place\n")
 
-  data = explore(space) 
+  if not working_info:
+    working_info = { 'wd': [os.getcwd()],
+                     'hostname': [os.uname()[1]] }
+  data = explore(space, working_info)
 
   if len(data) > 0:
     print("\n{} entries ({} parsed by Hachoir)".format(len(data), count_hachoir))
 
-    ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'make', 'model', 'digest', 'mime', 'code', 'size', 'atime', 'mtime', 'ctime' ])
+    ph = pd.DataFrame(data, columns=['folder', 'name', 'datetime', 'make', 'model', 'digest', 'mime', 'code', 'size', 'atime', 'mtime', 'ctime', 'has_json' ])
     # split into OK and ERROR files
     ph_ok, ph_error = ph[ph.code == CODE_OK].copy(), ph[ph.code != CODE_OK].copy()
     print("{} ok / {} error".format(len(ph_ok), len(ph_error)))
@@ -203,7 +214,7 @@ def extract_data(space, datafile = None, verbose=0, working_info=None, force=Fal
 
     # Save data
     if datafile:
-      datafilename = "{}.pho".format(datafile)
+      datafilename = storage.normalize(datafile)
       create_file = True
       if os.path.isfile(datafilename):  
         create_file = force or confirm(
