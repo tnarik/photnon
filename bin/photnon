@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 from photnon.data_extraction import extract_data
-from photnon.data_analysis import deduplication_process, preduplication_info, timed_info, read_datafiles, produce_retime_script
+from photnon.data_analysis import preduplication_info, general_info, timed_info
+from photnon.data_analysis import deduplication_process, read_datafiles, produce_retime_script, enrich
 from photnon.data_analysis import REMOVAL_CODE_SCHEDULE, REMOVAL_CODE_IGNORE, PERSIST_VERSION_KEEP
 from photnon import storage
 
@@ -123,6 +124,10 @@ if __name__ == "__main__":
             help='list information about the datafile',
             action='store_true',
             dest='list')
+  parser.add_argument('-t',
+            help='test enrich',
+            action='store_true',
+            dest='test')
 
   args = parser.parse_args()
 
@@ -145,7 +150,7 @@ if __name__ == "__main__":
 
 
 
-  computed_columns = ['mtime_date', 'datetime_date'] # Values that cannot be stored as HDF and are computable
+  #computed_columns = ['mtime_date', 'datetime_date', 'folder_date'] # Values that cannot be stored as HDF and are computable
   divergent_columns = ['atime', 'ctime', 'should_remove', 'persist_version'] # Values which might differ without impacting file identity (some are computed)
 
   ph_working_info, ph_ok_orig, ph_error_orig, num_read_ok, num_read_error = read_datafiles(working_info, args.datafiles, deduplicate=True)
@@ -174,13 +179,21 @@ if __name__ == "__main__":
     if 'should_remove' in ph_error_orig.columns:
       ph_error = ph_error_orig.loc[ph_error_orig[ph_error_orig.should_remove != REMOVAL_CODE_SCHEDULE].index]
 
-  num_ok = len(ph_ok)
-  num_error = len(ph_error)
-  num_total = num_ok + num_error
-  print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
-  #print("{}================================".format(Fore.YELLOW))
-  print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
+  ## Below some commented out timing code for the enrich process
+  #import timeit
+  #t = timeit.timeit(lambda : enrich(ph_ok), number=200)
+  #print(t/200)
+  #exit(2)
+  computed_columns = enrich(ph_ok)
+  if args.test:
+    print(ph_ok.columns)
+    print(ph_ok[ph_ok.folder_date.notna()].folder_date.unique())
+    print(ph_ok[ph_ok.folder_month_date.notna()].folder_month_date.unique())
+    print(ph_ok.dtypes)
+    #print(ph_ok[ph_ok.folder_has_date != '']['folder_has_date'])
+    exit(2)
 
+  general_info(ph_ok, ph_error)
   timed_info(ph_ok)
 
   if args.no_preferred:
@@ -210,16 +223,18 @@ if __name__ == "__main__":
 
 
   print("\n{}================================ after deduplication".format(Fore.YELLOW))
-  num_ok = len(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
-  num_error = len(ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
-  num_total = num_ok + num_error
-  print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
-  print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
+  general_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index], ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
   timed_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
 
   produce_retime_script(ph_ok, script="retime.sh")
 
-
+  print("\n{}================================ after retiming".format(Fore.YELLOW))
+  retimeable_photos = ph_ok[ph_ok['should_remove'] != REMOVAL_CODE_SCHEDULE].copy()
+  #for i, p in retimeable_photos.iterrows():
+  #  p['mtime'] = p['datetime']#time.mktime(time.strptime(p['datetime'], '%Y-%m-%d %H:%M:%S'));
+  retimeable_photos['mtime'] = retimeable_photos['datetime']
+  general_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index], ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
+  timed_info(retimeable_photos)#ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
 
 
   # ALL sets processed

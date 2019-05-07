@@ -72,7 +72,7 @@ def identify_file(path, name, verbose=0):
     code = CODE_SIZE_ZERO
   else:
     # Are there metadata as .json?
-    has_json = os.path.exists(os.path.splitext(path)[0]+'.json')
+    has_json = os.path.exists(path+'.json')
 
     try:
       pic_exif = piexif.load(path)

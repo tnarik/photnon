@@ -1,4 +1,5 @@
 import os
+import re
 
 from photnon import storage
 
@@ -56,7 +57,10 @@ def report_dupes(photos_df, dup_indexes, goal = None, verbose=0):
   #print("{}Remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
   #            (photos_df.should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
 
-def select_best_alternative_index(alternatives):
+#json_duos = 0
+#json_ones = 0
+#json_more = 0
+def select_best_alternative_index(alternatives, x):
   '''
   This works like this:
   1. If a single alternative, choose that: This is the case for name based duplication (preferred folder wins)
@@ -70,6 +74,22 @@ def select_best_alternative_index(alternatives):
   # Single alternative
   if len(alternatives) == 1:
     return alternatives['index'].values[0]
+
+  #€lobal json_duos
+  #€lobal json_ones
+  #€lobal json_more
+  #€=sum(alternatives.has_json)
+  #€f a != 0:
+  #€ if a == 2:
+  #€   json_duos += 1
+  #€ elif a==1:
+  #€   json_ones +=1
+  #€ else:
+  #€   json_more += 1
+  #€   print(a, alternatives[['folder','name']].apply(lambda x: x['folder']+"/"+x['name'], axis=1).values)
+  #€   print(x.folder, x['name'])
+  #€   print("{} >>> ".format(Fore.YELLOW))
+
 
   num_name = alternatives['name'].nunique(dropna=False)
   num_mtime = alternatives['mtime'].nunique(dropna=False)
@@ -104,7 +124,7 @@ def decide_removal_action(x, preferred_candidates, decide_removal_entries):
 
     if len(master_candidates) > 1:
       # Several master candidates
-      best_alternative = select_best_alternative_index(master_candidates)
+      best_alternative = select_best_alternative_index(master_candidates, x)
       #print("best -----",master_candidates, '-----',best_alternative)
       if (best_alternative is not None) and (best_alternative != x.name):
         return {'persist_version': best_alternative, 'should_remove':REMOVAL_CODE_SCHEDULE}
@@ -113,7 +133,7 @@ def decide_removal_action(x, preferred_candidates, decide_removal_entries):
         return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
   # No master candidates, let the algorithm decide based on all available
-  best_alternative = select_best_alternative_index(decide_removal_entries.loc[x.digest])
+  best_alternative = select_best_alternative_index(decide_removal_entries.loc[x.digest], x)
   if (best_alternative is not None) and (best_alternative != x.name):
     return {'persist_version': best_alternative, 'should_remove':REMOVAL_CODE_SCHEDULE}
   else:
@@ -164,6 +184,7 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
           lambda x: decide_removal_action(x, preferred_candidates, decide_removal_entries),
           axis=1, result_type='expand')
 
+  #print("count of json coincidences:",json_ones,'/', json_duos, '/', json_more)
   # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
   # This block guarantees that all refered masters (persist_version) are kept.
   # It does this by reassigning the underlying master
@@ -176,6 +197,9 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
       lambda x: all_replaceable.loc[x.persist_version].persist_version,
       axis=1 )
     all_replaceable.loc[new_persist_version.index, 'persist_version'] = new_persist_version.values
+
+
+  print("{}WITH the duplicates identified and cross-checked, JSON metadata can be generated".format(Fore.YELLOW))
 
 
   all_persisted_version_kept = all(photos_df.loc[all_replaceable.persist_version].persist_version == PERSIST_VERSION_KEEP)
@@ -351,26 +375,75 @@ def preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, 
         ))
   print()
 
+def general_info(ph_ok, ph_error):
+  num_ok = len(ph_ok)
+  num_error = len(ph_error)
+  num_total = num_ok + num_error
+  print("processing   : {} (ok: {}/ error: {})".format(num_total, num_ok, num_error))
+  print("{}% errors{}: {:.2%}".format(Fore.GREEN, Fore.RESET, num_error/ num_total))
+  print("{}% with JSON metadata{}: {:.2%}, {}".format(Fore.GREEN, Fore.RESET, (sum(ph_ok.has_json)+sum(ph_error.has_json))/ num_total, sum(ph_ok.has_json)))
+
+def enrich(photos_df):
+  '''
+  The list of columns added is returned. There is no need to store those values are they'll be recreated.
+  Also, they might not be storable as HDF due to the types.
+  '''
+  photos_df['mtime_date'] = photos_df.mtime.apply(lambda x: x.date())
+  photos_df['datetime_date'] = photos_df.datetime.apply(lambda x: x.date())
+  photos_df['second_discrepancy'] = (photos_df.datetime - photos_df.mtime).apply(lambda x: abs(x.total_seconds()))
+  # photos_df['folder_date'] = photos_df['folder'].apply(lambda x: len(x.split('/')))
+  #photos_df['folder_date'] = photos_df['folder'].str.split('/').str[-1].str.match('\d{4}_\d{2}_\d{2}')
+
+  # Up to this point, the baseline is .8459 s -> 2.106 (1.98 without bool) for the hd_bank_master.pho set / and .16045 -> 0.36 for the hd_back.pho set
+#
+  #Always a day
+  a = re.compile(".*{0}(\d{{4}}_\d{{2}}_\d{{2}})(?:\s+[^{0}]*)?".format(os.path.sep))
+  #photos_df['folder_has_date'] = photos_df['folder'].str.match(a)
+  photos_df['folder_date'] = photos_df['folder'].str.extract(a)
+  photos_df['folder_date'] = pd.to_datetime(photos_df['folder_date'], errors='coerce', format='%Y_%m_%d')
+
+  # Months without day?
+  a = re.compile(".*{0}(\d{{4}}{0}\d{{2}}){0}(?!\d{{4}}_\d{{2}}_\d{{2}})".format(os.path.sep))
+  #photos_df['folder_has_month_date'] = photos_df['folder'].str.match(a)
+  photos_df['folder_month_date'] = photos_df['folder'].str.extract(a)
+  photos_df['folder_month_date'] = pd.to_datetime(photos_df['folder_month_date'], errors='coerce', format='%Y{}%m'.format(os.path.sep))
+
+  return ['mtime_date', 'datetime_date', 'second_discrepancy',
+          'folder_date', 'folder_month_date'] # Values that cannot be stored as HDF and are computable
+
+
 def timed_info(photos_df_timed):
-  photos_df_timed['mtime_date'] = photos_df_timed.mtime.apply(lambda x: x.date())
-  photos_df_timed['datetime_date'] = photos_df_timed.datetime.apply(lambda x: x.date())
-  photos_df_timed['second_discrepancy'] = (photos_df_timed.datetime - photos_df_timed.mtime).apply(lambda x: abs(x.total_seconds()))
-
-  print("{}% matching times{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
-            sum(photos_df_timed.mtime == photos_df_timed.datetime)/len(photos_df_timed)))
-
-  print("{}% matching dates{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
+  print("{0}% matching times / dates{1}: {2:.2%} {0}/{1} {3:.2%}".format(Fore.GREEN,Fore.RESET,
+            sum(photos_df_timed.mtime == photos_df_timed.datetime)/len(photos_df_timed),
             sum(photos_df_timed.mtime_date == photos_df_timed.datetime_date)/len(photos_df_timed)))
 
-  print("{0}% with discrepancy{1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
-            sum(photos_df_timed.second_discrepancy <= 60)/len(photos_df_timed),
-            sum(photos_df_timed.second_discrepancy <= 3600)/len(photos_df_timed),
-            sum(photos_df_timed.second_discrepancy <= 24*3600)/len(photos_df_timed)))
+  #print("{0}% with discrepancy{1}:{0} <1 minute:{1} {2:.2%} {0}/ <1 hour:{1} {3:.2%} {0}/ <1 day:{1} {4:.2%} {0}/ >1 day:{1} {5:.2%}".format(Fore.GREEN,Fore.RESET,
+  #          sum(photos_df_timed.second_discrepancy <= 60)/len(photos_df_timed),
+  #          sum(photos_df_timed.second_discrepancy <= 3600)/len(photos_df_timed),
+  #          sum(photos_df_timed.second_discrepancy <= 24*3600)/len(photos_df_timed),
+  #          sum(photos_df_timed.second_discrepancy > 24*3600)/len(photos_df_timed)))
+
+  photos_df_timed_not = photos_df_timed[photos_df_timed.second_discrepancy != 0]
+  if len(photos_df_timed_not) > 0:
+    print("{0}% with discrepancy ({1}{6}{0}):{1} {2:.2%} {0}<= 1 minute <{1} {3:.2%} {0}<= 1 hour <{1} {4:.2%} {0}<= 1 day <{1} {5:.2%}".format(Fore.GREEN,Fore.RESET,
+              sum(photos_df_timed_not.second_discrepancy <= 60)/len(photos_df_timed_not),
+              sum(photos_df_timed_not.second_discrepancy.between(61, 3600))/len(photos_df_timed_not),
+              sum(photos_df_timed_not.second_discrepancy.between(3601, 24*3600))/len(photos_df_timed_not),
+              sum(photos_df_timed_not.second_discrepancy > 24*3600)/len(photos_df_timed_not),
+              len(photos_df_timed_not)))
 
   print("{}% timeless{}: {:.2%}".format(Fore.GREEN,Fore.RESET,
             len(photos_df_timed[photos_df_timed.timeless])/len(photos_df_timed)))
+  #if len(photos_df_timed[photos_df_timed.timeless]) > 0:
+  #  print("{0}% with discrepancy (timeless){1}:{0} <1 minute:{1} {2:.2%} {0}/ <1 hour:{1} {3:.2%} {0}/ <1 day:{1} {4:.2%} {0}/ >1 day:{1} {5:.2%}".format(Fore.GREEN,Fore.RESET,
+  #            sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 60)/len(photos_df_timed[photos_df_timed.timeless]),
+  #            sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 3600)/len(photos_df_timed[photos_df_timed.timeless]),
+  #            sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 24*3600)/len(photos_df_timed[photos_df_timed.timeless]),
+  #            sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy > 24*3600)/len(photos_df_timed[photos_df_timed.timeless])))
+
   if len(photos_df_timed[photos_df_timed.timeless]) > 0:
-    print("{0}% with discrepancy (timeless) {1}:{0} 1 minute:{1} {2:.2%} {0}/ 1 hour:{1} {3:.2%} {0}/ 1 day:{1} {4:.2%}".format(Fore.GREEN,Fore.RESET,
+    print("{0}% with discrepancy (timeless){1}: {2:.2%} {0}<= 1 minute <{1} {3:.2%} {0}<= 1 hour <{1} {4:.2%} {0}<= 1 day <{1} {5:.2%}".format(Fore.GREEN,Fore.RESET,
               sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 60)/len(photos_df_timed[photos_df_timed.timeless]),
-              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 3600)/len(photos_df_timed[photos_df_timed.timeless]),
-              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy <= 24*3600)/len(photos_df_timed[photos_df_timed.timeless])))
+              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy.between(61, 3600))/len(photos_df_timed[photos_df_timed.timeless]),
+              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy.between(3601, 24*3600))/len(photos_df_timed[photos_df_timed.timeless]),
+              sum(photos_df_timed[photos_df_timed.timeless].second_discrepancy > 24*3600 )/len(photos_df_timed[photos_df_timed.timeless])))
