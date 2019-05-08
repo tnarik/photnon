@@ -29,6 +29,14 @@ import argparse
 from colorama import init, Fore
 init(autoreset=True)
 
+
+
+import timeit
+
+
+
+
+
 EXIT_CODE_WORKINGINFO_MISMATCH = 100
 EXIT_CODE_NO_SINGLE_OUTPUT = 101
 EXIT_CODE_NO_COMMANDS = 102
@@ -218,6 +226,7 @@ if __name__ == "__main__":
 
     preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first)
     deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
+            label = label,
             preferred_folder=preferred_folder,
             goal=sum(dup_digest_except_first), verbose = args.verbose)
 
@@ -226,7 +235,9 @@ if __name__ == "__main__":
   general_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index], ph_error.loc[ph_error[ph_error.should_remove != REMOVAL_CODE_SCHEDULE].index])
   timed_info(ph_ok.loc[ph_ok[ph_ok.should_remove != REMOVAL_CODE_SCHEDULE].index])
 
-  produce_retime_script(ph_ok, script="retime.sh")
+  t = timeit.timeit(lambda : produce_retime_script(ph_ok, script="retime.sh"), number=1)
+  print(t/1)
+  #produce_retime_script(ph_ok, script="retime.sh")
 
   print("\n{}================================ after retiming".format(Fore.YELLOW))
   retimeable_photos = ph_ok[ph_ok['should_remove'] != REMOVAL_CODE_SCHEDULE].copy()

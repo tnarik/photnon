@@ -1,5 +1,14 @@
 import os
 import re
+from jinja2 import Environment,PackageLoader
+template_env = Environment(
+    loader=PackageLoader('photnon', 'templates')
+)
+def datetimeformat(value, format='%Y'):
+    return value.strftime(format)
+template_env.filters['datetimeformat'] = datetimeformat
+template_env.filters['pathjoin'] = lambda *paths: os.path.join(*paths)
+
 
 from photnon import storage
 
@@ -57,10 +66,7 @@ def report_dupes(photos_df, dup_indexes, goal = None, verbose=0):
   #print("{}Remove report (total entries):\n{}{}".format(Fore.GREEN,Fore.RESET,
   #            (photos_df.should_remove.value_counts(sort=False).rename(REMOVAL_CODE_LEGEND)).to_string()))
 
-#json_duos = 0
-#json_ones = 0
-#json_more = 0
-def select_best_alternative_index(alternatives, x):
+def select_best_alternative_index(alternatives):
   '''
   This works like this:
   1. If a single alternative, choose that: This is the case for name based duplication (preferred folder wins)
@@ -74,22 +80,6 @@ def select_best_alternative_index(alternatives, x):
   # Single alternative
   if len(alternatives) == 1:
     return alternatives['index'].values[0]
-
-  #€lobal json_duos
-  #€lobal json_ones
-  #€lobal json_more
-  #€=sum(alternatives.has_json)
-  #€f a != 0:
-  #€ if a == 2:
-  #€   json_duos += 1
-  #€ elif a==1:
-  #€   json_ones +=1
-  #€ else:
-  #€   json_more += 1
-  #€   print(a, alternatives[['folder','name']].apply(lambda x: x['folder']+"/"+x['name'], axis=1).values)
-  #€   print(x.folder, x['name'])
-  #€   print("{} >>> ".format(Fore.YELLOW))
-
 
   num_name = alternatives['name'].nunique(dropna=False)
   num_mtime = alternatives['mtime'].nunique(dropna=False)
@@ -124,7 +114,7 @@ def decide_removal_action(x, preferred_candidates, decide_removal_entries):
 
     if len(master_candidates) > 1:
       # Several master candidates
-      best_alternative = select_best_alternative_index(master_candidates, x)
+      best_alternative = select_best_alternative_index(master_candidates)
       #print("best -----",master_candidates, '-----',best_alternative)
       if (best_alternative is not None) and (best_alternative != x.name):
         return {'persist_version': best_alternative, 'should_remove':REMOVAL_CODE_SCHEDULE}
@@ -133,7 +123,7 @@ def decide_removal_action(x, preferred_candidates, decide_removal_entries):
         return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
   # No master candidates, let the algorithm decide based on all available
-  best_alternative = select_best_alternative_index(decide_removal_entries.loc[x.digest], x)
+  best_alternative = select_best_alternative_index(decide_removal_entries.loc[x.digest])
   if (best_alternative is not None) and (best_alternative != x.name):
     return {'persist_version': best_alternative, 'should_remove':REMOVAL_CODE_SCHEDULE}
   else:
@@ -184,7 +174,6 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
           lambda x: decide_removal_action(x, preferred_candidates, decide_removal_entries),
           axis=1, result_type='expand')
 
-  #print("count of json coincidences:",json_ones,'/', json_duos, '/', json_more)
   # Once all content duplicates have been identified and tagged for removal, let's double check we are not doing anything stupid
   # This block guarantees that all refered masters (persist_version) are kept.
   # It does this by reassigning the underlying master
@@ -198,16 +187,12 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
       axis=1 )
     all_replaceable.loc[new_persist_version.index, 'persist_version'] = new_persist_version.values
 
-
-  print("{}WITH the duplicates identified and cross-checked, JSON metadata can be generated".format(Fore.YELLOW))
-
-
   all_persisted_version_kept = all(photos_df.loc[all_replaceable.persist_version].persist_version == PERSIST_VERSION_KEEP)
   if not all_persisted_version_kept:
     raise Exception("Some file intented as a master are to be removed!")
 
       
-def produce_dupes_script(photos_df, dup_indexes, script="dupes.sh"):
+def produce_dupes_scripts(photos_df, dup_indexes, script="dupes.sh", label=None):
   script_parts = []
   '''
   if [[ $(hostname) != 'Wintermute-Manoeuvre.local' ]]; then
@@ -233,8 +218,44 @@ def produce_dupes_script(photos_df, dup_indexes, script="dupes.sh"):
                 ))
 
   script_content = "\n".join(script_parts)
-  with open(script, 'w') as f:
+  with open("dup_actions_{}.sh".format(label), 'w') as f:
       f.write(script_content)
+
+  print("{}WITH the duplicates identified and cross-checked, JSON metadata can be generated".format(Fore.YELLOW))
+
+
+  print("For every processed duplicate that we keep, we want to find the groups with JSON files")
+  kept_digests = photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'persist_version'] == PERSIST_VERSION_KEEP].digest
+  kept_digests_and_json = photos_df.loc[dup_indexes, ['digest', 'has_json']][photos_df.loc[dup_indexes, 'digest'].isin(kept_digests)].groupby('digest').sum()
+  print(len(kept_digests_and_json[kept_digests_and_json.has_json == 0]),
+        len(kept_digests_and_json[kept_digests_and_json.has_json > 0]))
+
+  a = kept_digests_and_json[kept_digests_and_json.has_json == 0].index
+  b = kept_digests_and_json[kept_digests_and_json.has_json > 0].index
+  print(len(a.intersection(b)))
+  print( len(photos_df[photos_df.digest.isin(a)]), ' (entries without json) +',
+          len(photos_df[photos_df.digest.isin(b)]),' (entries with json) = ',
+          len(photos_df[photos_df.digest.isin(a.append(b))])
+        )
+
+  print("As the count seems ok, let, it is time to process this")
+  print("for the {} digests with an existing JSON ".format(len(kept_digests_and_json[kept_digests_and_json.has_json > 0])))
+  #for json_digest in kept_digests_and_json[kept_digests_and_json.has_json > 0].index:
+  #  print(json_digest)
+
+  photos_dfa = photos_df[['folder', 'name', 'digest']].copy()
+  photos_dfa['fullpath'] = photos_dfa.apply(lambda x: os.path.join(x['folder'], x['name']), axis=1)
+
+  template = template_env.get_template('script')
+  #print(template.render(entries=photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE]))
+  template.stream(entries=photos_dfa[photos_dfa.digest.isin(b)],
+                  nojson_num=len(photos_df[photos_df.digest.isin(a)]),
+                  json_num=len(photos_df[photos_df.digest.isin(b)])).dump("woop_{}.sh".format(label))
+
+
+#  2375:    "ph_ok[dup_digest].groupby('digest', sort=True).apply(lambda x: x)"
+  #print(photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].digest)
+  #print(photos_df[photos_df.digest =='8475834aeda8bb5907c2da3b085017b172213ce8'])
 
 def produce_retime_script(photos_df, script="retime.sh"):
   ''' A pure python implementation is slower than 'touch' when executed file by file.
@@ -246,7 +267,19 @@ def produce_retime_script(photos_df, script="retime.sh"):
   mtime = pic['date'].timestamp()  # Or from some other time variable in string format (needs to be transformed into timestamp)
   # or mtime = time.mktime(time.strptime(pic['date'], '%Y-%m-%d %H:%M:%S'));
   os.utime(filepath, (atime, mtime))  # This typically modifies the 'ctime' as well on macOS
+
+  Also, using Jinja2 templates is slightly slower than generating the output by hand. but it is definitely cleaner and easier to expand
   '''
+
+  
+  template = template_env.get_template('retime.sh')
+  #print(template.render(entries=photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE]))
+
+  photos_dfa = photos_df[['folder', 'name','datetime', 'should_remove']].copy()
+  photos_dfa['fullpath'] = photos_dfa.apply(lambda x: os.path.join(x['folder'], x['name']), axis=1)
+  template.stream(entries=photos_dfa[photos_dfa['should_remove'] != REMOVAL_CODE_SCHEDULE]).dump(script)
+  '''
+
   script_parts = []
   for i, p in photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE].iterrows():
     script_parts.append("touch -m -t \"{0:%Y%m%d%H%M.%S}\" \"{1}\"".format(
@@ -255,7 +288,7 @@ def produce_retime_script(photos_df, script="retime.sh"):
   script_content = "\n".join(script_parts)
   with open(script, 'w') as f:
       f.write(script_content)
-
+  '''
 
 def read_datafiles(running_working_info, datafiles, deduplicate=True):
   ph_working_info = pd.DataFrame()
@@ -309,7 +342,7 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   
   return ph_working_info, ph_ok, ph_error, num_read_ok, num_read_error
 
-def deduplication_process(photos_df, dup_full, dup_digest, output_script, preferred_folder=None, goal=0, verbose=0):
+def deduplication_process(photos_df, dup_full, dup_digest, output_script, label, preferred_folder=None, goal=0, verbose=0):
   # process all entries from the input
   photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
   photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
@@ -324,7 +357,7 @@ def deduplication_process(photos_df, dup_full, dup_digest, output_script, prefer
     generate_dupes_info(photos_df, dup_digest, preferred_folder, verbose = verbose)
     report_dupes(photos_df, dup_digest, goal, verbose = verbose)
 
-  produce_dupes_script(photos_df, dup_digest, output_script)
+  produce_dupes_scripts(photos_df, dup_digest, label=label)
 
 def preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first):
   num_photos = len(photos_df)

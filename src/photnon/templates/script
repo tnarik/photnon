@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+
+import json
+import codecs
+
+print('{{nojson_num}} files without JSON')
+print('{{json_num}} files with JSON')
+
+{% for i, item in entries.iterrows() -%}
+#with codecs.open(os.path.join(p, file), 'r','utf-8-sig') as f:
+with codecs.open( "{{ item['fullpath'] }}.json", 'r','utf-8-sig') as f:
+	js = json.load(f)
+	print(js['Title'])
+{% endfor %}
+
+{#
+{% for i, item in entries.iterrows() -%}
+[ ! -f "{{ item['fullpath'] }}.json" ] && echo "cool"
+{% endfor %}
+
+{% for i, item in entries.iterrows() -%}
+[ -f "{{ item['fullpath'] }}.json" ] && echo "very"
+{% endfor %}
+#}
