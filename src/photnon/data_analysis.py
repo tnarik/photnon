@@ -243,15 +243,17 @@ def produce_dupes_scripts(photos_df, dup_indexes, script="dupes.sh", label=None)
   #for json_digest in kept_digests_and_json[kept_digests_and_json.has_json > 0].index:
   #  print(json_digest)
 
-  photos_dfa = photos_df[['folder', 'name', 'digest']].copy()
+  photos_dfa = photos_df[['folder', 'name', 'digest', 'has_json']].copy()
   photos_dfa['fullpath'] = photos_dfa.apply(lambda x: os.path.join(x['folder'], x['name']), axis=1)
 
   template = template_env.get_template('script')
   #print(template.render(entries=photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE]))
+  grouped = photos_dfa.loc[dup_indexes][photos_dfa.loc[dup_indexes, 'digest'].isin(kept_digests)].groupby('digest')
+
   template.stream(entries=photos_dfa[photos_dfa.digest.isin(b)],
+                  digest_groups = grouped,
                   nojson_num=len(photos_df[photos_df.digest.isin(a)]),
                   json_num=len(photos_df[photos_df.digest.isin(b)])).dump("woop_{}.sh".format(label))
-
 
 #  2375:    "ph_ok[dup_digest].groupby('digest', sort=True).apply(lambda x: x)"
   #print(photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].digest)
