@@ -1,32 +1,27 @@
 #!/usr/bin/env python3
-
 import json
 import codecs
 import os
 from collections import Counter
 
-{#% for i, item in entries.iterrows() -%}
-#with codecs.open(os.path.join(p, file), 'r','utf-8-sig') as f:
-with codecs.open( "{{ item['fullpath'] }}.json", 'r','utf-8-sig') as f:
-	js = json.load(f)
-	print(js['Title'])
-{% endfor % #}
-
-{# For every group, generate merged JSON metadata:
-	Tags: are joined without duplications, as a list.
-	Description: do they match? If there is a single one, use that one.
-#}
+# For every digest-based group, generate merged JSON metadata:
+#	Tags: are joined without duplications, as a sorted list.
+#	Description: do they match? If there is a single one, use that one
+#	AltDescriptions: In case there is more than one not-matching description
+#   Title: Use from the JSON or the alternative filenames.
+#.  AltTitles: In case there is more than one not-matching title
 
 count = 0
 count_nj = 0
 count_t = 0
-{% for i, group in digest_groups -%}
+
+{%- for i, group in digest_groups %}
 tags = set()
 descriptions = []
 titles = []
-{% if group['has_json'].sum() >= 1 %}
-#print("Processing digest with JSON: {}".format( "{{ i }}" ))
+{% set ns = namespace(main_file='') -%}
 {% for j, e in group.iterrows() -%}
+{% if e['has_json'] -%}
 count += 1
 count_t += 1
 if os.path.exists("{{ e['fullpath'] }}.json"):
@@ -34,48 +29,42 @@ if os.path.exists("{{ e['fullpath'] }}.json"):
 		js = json.load(f)
 		tags.update( js['Tags'] if isinstance(js['Tags'], list)
 			 else js['Tags'].split(' ') )
-		descriptions.append(js['Description'])	
+		descriptions.append(js['Description'])
+		{% if e['persist_version'] != KEPT_MARK -%}
 		titles.append(js['Title'])
-else:
-	#print("=======NO JSON======= (only title makes sense)")
-	titles.append("{{ e['name'] }}")
-{% endfor %}
-'''
-if len(descriptions) > 1 or len(titles) > 1:
-#	metadata['Description'] = descriptions.most_common(1)[0]
-	print("HARDER JOINED = ", metadata)
-else:
-#	metadata['Description'] = ''
-	print("JOINED = ", metadata)
-'''
-{% else %}
-{% for j, e in group.iterrows() -%}
+		{% else -%}
+		{% set ns.main_file = e['name'] -%}
+		{% endif %}
+{% else -%}
+count_nj += 1 #{{group|length}}
+count_t += 1 #{{group|length}}
+{% if e['persist_version'] != KEPT_MARK -%}
 titles.append("{{ e['name'] }}")
+{% else -%}
+{% set ns.main_file = e['name'] -%}
+{% endif -%}
+{% endif -%}
+{% endfor -%}
 
-count_nj += 1#{{group|length}}
-count_t += 1#{{group|length}}
-#print("Processing digest with NO JSON: {}".format( "{{ i }}" ))
-{% endfor %}
-{% endif %}
-
-metadata = {'Tags': list(tags),
+metadata = {'Tags': sorted(list(tags)),
 			'Description': '',
 			'Title': '' }
+
 descriptions = Counter(descriptions)
 del descriptions['']
 if (len(descriptions) >= 1):
 	metadata['Description'] = descriptions.most_common(1)[0][0]
 	if (len(descriptions) > 1):
-		print('MORE THAN ONE DESCRIPTION, HARD TO BELIEVE')
+		metadata['AltDescriptions'] = sorted([d[0] for d in descriptions.most_common()[1:]])
 
 titles = Counter(titles)
 del titles['']
 if len(titles) >= 1:
 	metadata['Title'] = titles.most_common(1)[0][0]
 	if len(titles) > 1:
-		metadata['AltTitles'] = [t[0] for t in titles.most_common()[1:]]
+		metadata['AltTitles'] = sorted([t[0] for t in titles.most_common()[1:]])
 
-print("MERGED = ", metadata)
+print("MERGED '{{ ns.main_file }}' = ", metadata)
 {% endfor %}
 
 
