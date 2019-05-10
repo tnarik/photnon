@@ -130,7 +130,7 @@ def decide_removal_action(x, preferred_candidates, decide_removal_entries):
     # Either there is no alternative or right now there is only one: this entry
     return {'persist_version': PERSIST_VERSION_KEEP, 'should_remove':REMOVAL_CODE_POSIBLE}
 
-def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose=0):
+def generate_dupes_info(photos_df, dup_indexes, preferred_folder = False, verbose=0):
   if len(photos_df[dup_indexes]) == 0:
     return
 
@@ -343,7 +343,7 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   
   return ph_working_info, ph_ok, ph_error, num_read_ok, num_read_error
 
-def deduplication_process(photos_df, dup_full, dup_digest, output_script, label, preferred_folder=None, goal=0, verbose=0):
+def deduplication_process(photos_df, dup_full, dup_digest, output_script, label, preferred_folder=False, goal=0, verbose=0):
   # process all entries from the input
   photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
   photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP

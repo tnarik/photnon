@@ -123,11 +123,9 @@ if __name__ == "__main__":
             dest='space')
   parser.add_argument('-p', '--preferred',
             help='preferred folder to consider when processing duplicates (otherwise it will be asked interactively)',
+            nargs='?',
+            default=False,
             dest='preferred_folder')
-  parser.add_argument('+p', '--no-preferred',
-            help='disable preferred folder to consider when processing duplicates',
-            action='store_true',
-            dest='no_preferred')
   parser.add_argument('-l', '--list',
             help='list information about the datafile',
             action='store_true',
@@ -194,6 +192,7 @@ if __name__ == "__main__":
   #exit(2)
   computed_columns = enrich(ph_ok)
   if args.test:
+    print("===",args.preferred_folder,'===')
     print(ph_ok.columns)
     print(ph_ok[ph_ok.folder_date.notna()].folder_date.unique())
     print(ph_ok[ph_ok.folder_month_date.notna()].folder_month_date.unique())
@@ -204,9 +203,7 @@ if __name__ == "__main__":
   general_info(ph_ok, ph_error)
   timed_info(ph_ok)
 
-  if args.no_preferred:
-    preferred_folder = None
-  else:
+  if args.preferred_folder != False:
     if args.preferred_folder:
       preferred_folder = args.preferred_folder
     else:
