@@ -192,12 +192,13 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = None, verbose
     raise Exception("Some file intented as a master are to be removed!")
 
       
-def produce_dupes_scripts(photos_df, dup_indexes, script="dupes.sh", label=None):
+def produce_dupes_scripts(photos_df, dup_indexes, label=None):
   script_parts = []
   '''
   if [[ $(hostname) != 'Wintermute-Manoeuvre.local' ]]; then
     echo 'SCRIPT run on a different machine, confirm to proceed';
   fi
+  '''
   '''
   for i, p in photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].sort_values('digest').iterrows():
     try:
@@ -220,7 +221,7 @@ def produce_dupes_scripts(photos_df, dup_indexes, script="dupes.sh", label=None)
   script_content = "\n".join(script_parts)
   with open("dup_actions_{}.sh".format(label), 'w') as f:
       f.write(script_content)
-
+  '''
   print("{}WITH the duplicates identified and cross-checked, JSON metadata can be generated".format(Fore.YELLOW))
 
 
@@ -246,15 +247,12 @@ def produce_dupes_scripts(photos_df, dup_indexes, script="dupes.sh", label=None)
   photos_dfa = photos_df[['folder', 'name', 'digest', 'has_json', 'persist_version']].copy()
   photos_dfa['fullpath'] = photos_dfa.apply(lambda x: os.path.join(x['folder'], x['name']), axis=1)
 
-  template = template_env.get_template('script')
+  template = template_env.get_template('dedup')
   #print(template.render(entries=photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE]))
   grouped = photos_dfa.loc[dup_indexes][photos_dfa.loc[dup_indexes, 'digest'].isin(kept_digests)].groupby('digest')
 
-  template.stream(entries=photos_dfa[photos_dfa.digest.isin(b)],
-                  KEPT_MARK=PERSIST_VERSION_KEEP,
-                  digest_groups = grouped,
-                  nojson_num=len(photos_df[photos_df.digest.isin(a)]),
-                  json_num=len(photos_df[photos_df.digest.isin(b)])).dump("woop_{}.sh".format(label))
+  template.stream(digest_groups = grouped,
+                  KEPT_MARK=PERSIST_VERSION_KEEP).dump("dedup_{}.sh".format(label))
 
 #  2375:    "ph_ok[dup_digest].groupby('digest', sort=True).apply(lambda x: x)"
   #print(photos_df.loc[dup_indexes][photos_df.loc[dup_indexes, 'should_remove'] == REMOVAL_CODE_SCHEDULE].digest)
