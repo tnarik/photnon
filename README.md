@@ -2,10 +2,16 @@
 
 A project to inspect picture files, read timestamps and other information from them, and organise/update the files correspondingly.
 
-The single script `photnon.py` should be able to run as a one step or a two step process:
+The binarty `photnon` (in reality a python scripkt) installed as part of the package should be able to runs as a two step process (it used to be possible running it as one; might add that back after completing it):
 
-1. Data mining from one folder and generation of datafile
+1. Data mining from one or several folders and generation of datafile
 2. Analysis of datafile (with minor user input) and generation of scripts for further review before off-band execution.
+
+The current output is:
+
+- `dedup_OK.sh` -> deduplication script and JSON metadata merging/generation for the OK set.
+- `dedup_ER.sh` -> deduplication script and JSON metadata merging/generation for the ERROR set.
+- `retime.sh` -> a test retiming script.
 
 ## Potential issues
 

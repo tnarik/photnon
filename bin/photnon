@@ -75,7 +75,7 @@ def all_folders_with_counts(folders):
 
   return file_counts.sort_values(ascending=False)
 
-def preferred_folder(full_folders):
+def select_preferred_folder(full_folders):
   NONE_PREFERRED = '[NONE]'
 
   folders = all_folders_with_counts(full_folders).index.map(lambda ix: os.path.sep.join(ix))
@@ -89,7 +89,7 @@ def preferred_folder(full_folders):
   preferred_folder = prompt('Enter the preferred folder (use [TAB]): ', completer=folder_completer,
     validator=validator)
 
-  if preferred_folder == NONE_PREFERRED: preferred_folder = None
+  if preferred_folder == NONE_PREFERRED: preferred_folder = False
   return preferred_folder
 
 
@@ -203,12 +203,11 @@ if __name__ == "__main__":
   general_info(ph_ok, ph_error)
   timed_info(ph_ok)
 
+  preferred_folder = args.preferred_folder
   if args.preferred_folder != False:
-    if args.preferred_folder:
-      preferred_folder = args.preferred_folder
-    else:
+    if args.preferred_folder is None:
       print("{}Calculating default folder priority, to display options by number of files".format(Fore.GREEN))
-      preferred_folder = preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
+      preferred_folder = select_preferred_folder(ph_ok_orig['folder'].append(ph_error_orig['folder']))
 
   for label, photos_df in [("OK", ph_ok), ("ERROR", ph_error)]:
     print("{}================================ {} set".format(Fore.YELLOW, label))

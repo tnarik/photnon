@@ -13,39 +13,37 @@ VERBOSE = False
 #   Title: Use from the JSON or the alternative filenames.
 #.  AltTitles: In case there is more than one not-matching title
 
-{#count = 0
-count_nj = 0
-count_t = 0
-#}
 {%- for i, group in digest_groups %}
 tags = set()
 descriptions = []
+altdescriptions = []
 titles = []
+alttitles = []
 paths = []
+has_jsons = []
 {% set ns = namespace(main_file='', main_file_path='') -%}
 {% for j, e in group.iterrows() -%}
 {% if e['has_json'] -%}
-{#count += 1
-count_t += 1
-if os.path.exists("{{ e['fullpath'] }}.json"):#}
 with codecs.open( "{{ e['fullpath'] }}.json", 'r','utf-8-sig') as f:
 	js = json.load(f)
 	tags.update( js['Tags'] if isinstance(js['Tags'], list)
 		 else js['Tags'].split(' ') )
 	descriptions.append(js['Description'])
-	{% if e['persist_version'] != KEPT_MARK -%}
+	if 'AltDescriptions' in js: altdescriptions.extend(js['AltDescriptions'])
 	titles.append(js['Title'])
+	if 'AltTitles' in js: alttitles.extend(js['AltTitles'])
+	{% if e['persist_version'] != KEPT_MARK -%}
 	paths.append("{{ e['fullpath'] }}")
+	has_jsons.append(True)
 	{% else -%}
 	{% set ns.main_file = e['name'] -%}
 	{% set ns.main_file_path = e['fullpath'] -%}
 	{% endif %}
 {% else -%}
-{#count_nj += 1
-count_t += 1
-#}{% if e['persist_version'] != KEPT_MARK -%}
+{% if e['persist_version'] != KEPT_MARK -%}
 titles.append("{{ e['name'] }}")
 paths.append("{{ e['fullpath'] }}")
+has_jsons.append(False)
 {% else -%}
 {% set ns.main_file = e['name'] -%}
 {% set ns.main_file_path = e['fullpath'] -%}
@@ -61,24 +59,34 @@ descriptions = Counter(descriptions)
 del descriptions['']
 if (len(descriptions) >= 1):
 	metadata['Description'] = descriptions.most_common(1)[0][0]
-	if (len(descriptions) > 1):
-		metadata['AltDescriptions'] = sorted([d[0] for d in descriptions.most_common()[1:]])
+
+metadata['AltDescriptions'] = sorted(set(altdescriptions + [d[0] for d in descriptions.most_common()[1:]]))
+if len(metadata['AltDescriptions']) == 0:
+	del metadata['AltDescriptions']
 
 titles = Counter(titles)
 del titles['']
 if len(titles) >= 1:
 	metadata['Title'] = titles.most_common(1)[0][0]
-	if len(titles) > 1:
-		metadata['AltTitles'] = sorted([t[0] for t in titles.most_common()[1:]])
+
+metadata['AltTitles'] = sorted(set(alttitles + [t[0] for t in titles.most_common()[1:]]))
+if len(metadata['AltTitles']) == 0:
+	del metadata['AltTitles']
 
 if ( ( len(metadata['Tags']) > 0 or metadata['Description'] != '' or metadata['Title'] != '' ) and
 	 ( ('AltTitles' not in metadata or len(metadata['AltTitles']) > 0) and
 	   ('AltDescriptions' not in metadata or len(metadata['AltDescriptions']) > 0) ) ):
 	if VERBOSE: print("MERGED '{{ ns.main_file }}' = ", metadata)
+	with open( "{{ ns.main_file_path }}.json", 'w') as f:
+		json.dump(metadata, f)
 
-for p in paths:
+for p,h in zip(paths, has_jsons):
 	if filecmp.cmp('{{ ns.main_file_path }}', p, shallow=False):
 		print("rm \"{}\"".format(p))
+		os.remove("{}".format(p))
+		if h:
+			print("rm \"{}.json\"".format(p))
+			os.remove("{}.json".format(p))
 
 {% endfor %}
 
