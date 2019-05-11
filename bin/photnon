@@ -169,10 +169,12 @@ if __name__ == "__main__":
     print(ph_working_info)
     print("{}Datafiles generated on different (or unknown) systems".format(Fore.RED, Fore.RESET))
     print("{}Final scripts would run on a single machine, which could cause problems in some scenarios (see README.md).{}".format(Fore.YELLOW, Fore.RESET))
+    print("{}The output file will be marked as generated on the first machine.{}".format(Fore.YELLOW, Fore.RESET))
     if not confirm(
           suffix="(y/N)",
           message="Do you want to proceed?"):
-      sys.exit(EXIT_CODE_WORKINGINFO_MISMATCH)
+      exit(EXIT_CODE_WORKINGINFO_MISMATCH)
+    ph_working_info.hostname = [ph_working_info.hostname[0]]
 
   print("original     : {} (ok: {}/ error: {})".format(num_read_ok + num_read_error, num_read_ok, num_read_error))
   print("post-drop    : {} (ok: {}/ error: {})".format(len(ph_ok_orig) + len(ph_error_orig), len(ph_ok_orig), len(ph_error_orig)))
@@ -223,6 +225,7 @@ if __name__ == "__main__":
     preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first)
     deduplication_process(photos_df, dup_full, dup_digest, "dup_actions_{}.sh".format(label),
             label = label,
+            working_info = ph_working_info,
             preferred_folder=preferred_folder,
             goal=sum(dup_digest_except_first), verbose = args.verbose)
 
@@ -254,13 +257,13 @@ if __name__ == "__main__":
       datafilename = storage.normalize(args.datafiles[0])
     else:
       print("There are several input datafiles and no single output")
-      sys.exit(EXIT_CODE_NO_SINGLE_OUTPUT)
+      exit(EXIT_CODE_NO_SINGLE_OUTPUT)
 
     ph_ok.drop(computed_columns, axis=1).to_hdf(datafilename, key='ok', format="table")
     ph_error.to_hdf(datafilename, key='error', format="table")
     # After reading the datafiles, the working information needs to be sanitised and refreshed
     pd.DataFrame( { 'wd': ['.'],
-                    'hostname': [os.uname()[1]] }
+                    'hostname': ph_working_info.hostname }
                 ).to_hdf(datafilename, key='info', format="table")
 
     if args.repack:

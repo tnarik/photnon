@@ -192,7 +192,7 @@ def generate_dupes_info(photos_df, dup_indexes, preferred_folder = False, verbos
     raise Exception("Some file intented as a master are to be removed!")
 
       
-def produce_dupes_scripts(photos_df, dup_indexes, label=None):
+def produce_dupes_scripts(photos_df, dup_indexes, working_info = None, label=None):
   script_parts = []
   '''
   if [[ $(hostname) != 'Wintermute-Manoeuvre.local' ]]; then
@@ -251,7 +251,12 @@ def produce_dupes_scripts(photos_df, dup_indexes, label=None):
   #print(template.render(entries=photos_df[photos_df['should_remove'] != REMOVAL_CODE_SCHEDULE]))
   grouped = photos_dfa.loc[dup_indexes][photos_dfa.loc[dup_indexes, 'digest'].isin(kept_digests)].groupby('digest')
 
+  script_hostname = ''
+  if working_info is not None:
+    script_hostname = working_info.hostname[0]
+
   template.stream(digest_groups = grouped,
+                  script_hostname = script_hostname,
                   KEPT_MARK=PERSIST_VERSION_KEEP).dump("dedup_{}.sh".format(label))
 
 #  2375:    "ph_ok[dup_digest].groupby('digest', sort=True).apply(lambda x: x)"
@@ -343,7 +348,7 @@ def read_datafiles(running_working_info, datafiles, deduplicate=True):
   
   return ph_working_info, ph_ok, ph_error, num_read_ok, num_read_error
 
-def deduplication_process(photos_df, dup_full, dup_digest, output_script, label, preferred_folder=False, goal=0, verbose=0):
+def deduplication_process(photos_df, dup_full, dup_digest, output_script, label, working_info = None, preferred_folder=False, goal=0, verbose=0):
   # process all entries from the input
   photos_df.loc[:, 'should_remove'] = REMOVAL_CODE_IGNORE
   photos_df.loc[:, 'persist_version'] = PERSIST_VERSION_KEEP
@@ -358,7 +363,7 @@ def deduplication_process(photos_df, dup_full, dup_digest, output_script, label,
     generate_dupes_info(photos_df, dup_digest, preferred_folder, verbose = verbose)
     report_dupes(photos_df, dup_digest, goal, verbose = verbose)
 
-  produce_dupes_scripts(photos_df, dup_digest, label=label)
+  produce_dupes_scripts(photos_df, dup_digest, working_info, label=label)
 
 def preduplication_info(photos_df, dup_full, dup_full_except_first, dup_digest, dup_digest_except_first):
   num_photos = len(photos_df)

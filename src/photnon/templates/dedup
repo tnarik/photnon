@@ -1,11 +1,36 @@
 #!/usr/bin/env python3
+import argparse
+
 import json
 import codecs
 import os
 import filecmp
 from collections import Counter
 
-VERBOSE = False
+EXIT_CODE_RUN_WITH_F = 1
+
+parser = argparse.ArgumentParser(description="Photon", prefix_chars="-+")
+parser.add_argument('-n', '--dry-run',
+    action='store_true',
+	help='do not change files (do not remove or create)',
+	dest='dry_run')
+parser.add_argument('-v', '--verbose',
+    action='store_true',
+	help='verbose output',
+	dest='verbose')
+parser.add_argument('-f', '--force',
+    action='store_true',
+	help='run regardless of machine not-matching',
+	dest='force')
+args = parser.parse_args()
+
+
+if not args.force and os.uname()[1] != "{{ script_hostname }}":
+	print("Running from machine '{}' instead of '{{ script_hostname }}' (where the files were read)".format(os.uname()[1]))
+	print("If you are sure you want to do this (file layout might be different, so it's risky), please run with:")
+	print("    -f")
+	exit(EXIT_CODE_RUN_WITH_F)
+
 # For every digest-based group, generate merged JSON metadata:
 #	Tags: are joined without duplications, as a sorted list.
 #	Description: do they match? If there is a single one, use that one
@@ -76,19 +101,22 @@ if len(metadata['AltTitles']) == 0:
 if ( ( len(metadata['Tags']) > 0 or metadata['Description'] != '' or metadata['Title'] != '' ) and
 	 ( ('AltTitles' not in metadata or len(metadata['AltTitles']) > 0) and
 	   ('AltDescriptions' not in metadata or len(metadata['AltDescriptions']) > 0) ) ):
-	if VERBOSE: print("MERGED '{{ ns.main_file }}' = ", metadata)
-	with open( "{{ ns.main_file_path }}.json", 'w') as f:
-		json.dump(metadata, f)
+	if args.dry_run:
+		print("touch {{ ns.main_file_path }}.json", "" if not args.verbose else " = "+json.dumps(metadata))
+	else:
+		with open("{{ ns.main_file_path }}.json", 'w') as f:
+			json.dump(metadata, f)
 
 for p,h in zip(paths, has_jsons):
 	if filecmp.cmp('{{ ns.main_file_path }}', p, shallow=False):
-		print("rm \"{}\"".format(p))
-		os.remove("{}".format(p))
-		if h:
-			print("rm \"{}.json\"".format(p))
-			os.remove("{}.json".format(p))
+		if args.dry_run:
+			print("rm \"{}\"".format(p))
+			if h: print("rm \"{}.json\"".format(p))
+		else:
+			os.remove("{}".format(p))
+			if h: os.remove("{}.json".format(p))
 
 {% endfor %}
 
-if VERBOSE: print('{{digest_groups|length}} digests processed')
+if args.verbose: print('{{digest_groups|length}} digests processed')
 {#print("{} / {} = {} files in total".format(count, count_nj, count_t))#}
